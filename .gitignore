@@ -1,0 +1,8 @@
+/.claude
+api_key.txt
+/build
+/dist
+metadata.png
+requirements.txt
+image.png
+*.spec
