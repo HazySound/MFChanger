@@ -355,12 +355,24 @@ class MainFrame(ctk.CTkFrame):
                 self._image_warn_label.configure(text="")
         self._update_apply_btn()
 
-        # 파일명이 p{spid}.png 형식이면 PID로 자동 검색
-        stem = path.stem  # e.g. "p1231234"
-        if stem.startswith("p") and stem[1:].isdigit() and len(stem) > 4:
-            spid = int(stem[1:])
-            pid_str = str(spid)[3:]
-            self._search_panel.search_by_pid(pid_str, auto_select_spid=spid)
+        # 파일명이 p{숫자} 형식이면 PID로 자동 검색
+        # 예) p1231234.png, p1231234_25.png, p1234.png 모두 처리
+        stem = path.stem
+        if stem.lower().startswith("p"):
+            num_str = ""
+            for ch in stem[1:]:
+                if ch.isdigit():
+                    num_str += ch
+                else:
+                    break
+            if num_str:
+                if len(num_str) > 6:
+                    # SPID 형식 (앞 3자리=시즌, 나머지 6자리=PID) → 자동선택 시도
+                    pid_str = num_str[3:]
+                    self._search_panel.search_by_pid(pid_str, auto_select_spid=int(num_str))
+                else:
+                    # PID만 있는 형식 → 검색만
+                    self._search_panel.search_by_pid(num_str, auto_select_spid=0)
 
     def _paste_image(self, _event=None):
         try:
@@ -424,6 +436,8 @@ class MainFrame(ctk.CTkFrame):
             if record:
                 self._player_status_label.configure(text=f"변경됨: {record.changed_at}")
             self.refresh_thumb(spid)
+            if self._preview_mode == "현재 미페":
+                self._load_player_image(spid)
 
     def _on_change_error(self, msg: str):
         self._apply_btn.configure(state="normal", text="미페 교체 실행")
@@ -474,9 +488,15 @@ class MainFrame(ctk.CTkFrame):
             self._load_player_image(spid)
 
     def refresh_thumb(self, spid: int):
-        """미페 변경 후 검색 목록 썸네일 갱신 (캐시 무효화 + 재로드)."""
+        """미페 변경 후 검색 목록 썸네일 갱신 + 현재 선택된 선수라면 프리뷰도 갱신."""
         nexon_api.invalidate_player_cache(spid)
         self._search_panel.reload_thumb(spid)
+        if (
+            self._selected_player
+            and self._selected_player.get("id") == spid
+            and self._preview_mode == "현재 미페"
+        ):
+            self._load_player_image(spid)
 
     def _on_restore_official_error(self, msg: str):
         self._restore_official_btn.configure(state="normal", text="공식 미페로 복원")

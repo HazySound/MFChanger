@@ -160,11 +160,174 @@ class PlayerListItem(ctk.CTkFrame):
         self.configure(fg_color=("gray75", "gray30") if selected else "transparent")
 
 
+_HDR_NORMAL = ("gray92", "gray20")
+_HDR_HOVER  = ("gray85", "gray25")
+_HDR_ACTIVE = ("gray75", "gray30")
+
+
+class PlayerGroupItem(ctk.CTkFrame):
+    """PID 기준으로 묶인 선수 카드 그룹 (아코디언)."""
+
+    def __init__(
+        self,
+        master,
+        pid: str,
+        player_name: str,
+        players: list[dict],
+        season_map: dict,
+        on_click: Callable,
+        expanded: bool = False,
+        **kwargs,
+    ):
+        super().__init__(master, fg_color="transparent", **kwargs)
+        self._pid = pid
+        self._players = players
+        self._season_map = season_map
+        self._on_click = on_click
+        self._expanded = False
+        self._items: list[PlayerListItem] = []
+        self._body_frame: Optional[ctk.CTkFrame] = None
+
+        # ── 헤더 ──
+        self._header = ctk.CTkFrame(self, fg_color=_HDR_NORMAL, corner_radius=6, cursor="hand2")
+        self._header.pack(fill="x")
+
+        self._arrow_label = ctk.CTkLabel(
+            self._header,
+            text="▶",
+            font=fm.font(11),
+            width=20,
+        )
+        self._arrow_label.pack(side="left", padx=(8, 2), pady=8)
+
+        self._name_label = ctk.CTkLabel(
+            self._header,
+            text=player_name,
+            font=fm.font(13, "bold"),
+            anchor="w",
+        )
+        self._name_label.pack(side="left", pady=8)
+
+        count_label = ctk.CTkLabel(
+            self._header,
+            text=f"  {len(players)}개 카드",
+            font=fm.font(11),
+            text_color="gray",
+            anchor="w",
+        )
+        count_label.pack(side="left", pady=8)
+
+        for widget in (self._header, self._arrow_label, self._name_label, count_label):
+            widget.bind("<Button-1>", self._toggle)
+            widget.bind("<Enter>", self._hover_enter)
+            widget.bind("<Leave>", self._hover_leave)
+
+        if expanded:
+            self._expand(start_loading=False)
+
+    def _toggle(self, _event=None):
+        if self._expanded:
+            self._collapse()
+        else:
+            self._expand()
+
+    def _hover_enter(self, _event=None):
+        self._header.configure(fg_color=_HDR_HOVER)
+
+    def _hover_leave(self, _event=None):
+        self._header.configure(fg_color=_HDR_ACTIVE if self._expanded else _HDR_NORMAL)
+
+    def _expand(self, start_loading: bool = True):
+        if self._expanded:
+            return
+        self._expanded = True
+        self._arrow_label.configure(text="▼")
+        self._header.configure(fg_color=_HDR_ACTIVE)
+
+        self._body_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self._body_frame.pack(fill="x", padx=(16, 0), pady=(2, 0))
+
+        from src.api.nexon_api import get_season_id
+        for player in self._players:
+            spid = player.get("id", 0)
+            season_id = get_season_id(spid)
+            season_info = self._season_map.get(season_id, {
+                "seasonId": season_id,
+                "shortName": "",
+                "seasonImg": "",
+                "category": "기타",
+                "year": "",
+            })
+            item = PlayerListItem(
+                self._body_frame,
+                player=player,
+                season_info=season_info,
+                on_click=self._on_click,
+                fg_color="transparent",
+            )
+            item.pack(fill="x", pady=2)
+            self._items.append(item)
+
+        if start_loading:
+            items_snapshot = list(self._items)
+            self.after(0, lambda: [
+                item.start_loading() for item in items_snapshot if not item._destroyed
+            ])
+
+    def _collapse(self):
+        if not self._expanded:
+            return
+        self._expanded = False
+        self._arrow_label.configure(text="▶")
+        self._header.configure(fg_color="transparent")
+
+        for item in self._items:
+            item.destroy()
+        self._items.clear()
+
+        if self._body_frame:
+            self._body_frame.destroy()
+            self._body_frame = None
+
+    def start_loading_items(self):
+        """확장된 상태에서 이미지 로드 시작."""
+        items_snapshot = list(self._items)
+        for item in items_snapshot:
+            if not item._destroyed:
+                item.start_loading()
+
+    def deselect_all(self):
+        for item in self._items:
+            item.set_selected(False)
+
+    def find_and_select(self, spid: int) -> Optional[PlayerListItem]:
+        """SPID가 일치하는 아이템을 선택하고 반환. 없으면 None."""
+        for item in self._items:
+            if item._player.get("id") == spid:
+                item.set_selected(True)
+                return item
+        return None
+
+    def reload_thumb(self, spid: int) -> bool:
+        """해당 SPID 썸네일 다시 로드. 찾으면 True 반환."""
+        for item in self._items:
+            if item._player.get("id") == spid:
+                item.start_loading()
+                return True
+        return False
+
+    def destroy(self):
+        for item in self._items:
+            item.destroy()
+        self._items.clear()
+        super().destroy()
+
+
 class PlayerSearchPanel(ctk.CTkFrame):
     def __init__(self, master, on_select: Callable[[dict], None], **kwargs):
         super().__init__(master, **kwargs)
         self._on_select = on_select
-        self._items: list[PlayerListItem] = []
+        self._groups: list[PlayerGroupItem] = []
         self._spid_list: list[dict] = []
         self._season_map: dict[int, dict] = {}
         self._seasons: list[dict] = []
@@ -318,52 +481,83 @@ class PlayerSearchPanel(ctk.CTkFrame):
                 filtered.append(player)
             results = filtered
 
-        # 필터 적용 후 상위 100개 렌더
-        self._render_results(results[:100])
+        # 필터 적용 후 상위 200개 렌더 (그룹화 후에는 카드가 많아도 헤더만 보임)
+        self._render_groups(results[:200])
 
-    def _render_results(self, results: list[dict]):
-        from src.api.nexon_api import get_season_id
+    def _render_groups(self, results: list[dict]):
         self._clear_list()
 
         if not results:
             self._status_label.configure(text="검색 결과가 없습니다.")
             return
 
-        # 1단계: 위젯 전부 생성 → 즉시 화면에 표시 (이미지 없이)
+        # PID 기준으로 그룹화
+        from src.api.nexon_api import get_season_id
+        pid_order: list[str] = []
+        pid_groups: dict[str, list[dict]] = {}
+        pid_names: dict[str, str] = {}
+
         for player in results:
             spid = player.get("id", 0)
-            season_id = get_season_id(spid)
-            season_info = self._season_map.get(season_id, {
-                "seasonId": season_id,
-                "shortName": "",
-                "seasonImg": "",
-                "category": "기타",
-                "year": "",
-            })
-            item = PlayerListItem(
+            pid = str(spid)[3:]  # 앞 3자리 = 시즌 ID, 나머지 = PID
+            if pid not in pid_groups:
+                pid_order.append(pid)
+                pid_groups[pid] = []
+                pid_names[pid] = player.get("name", "알 수 없음")
+            pid_groups[pid].append(player)
+
+        # 가나다순 정렬
+        pid_order.sort(key=lambda pid: pid_names[pid])
+
+        total_players = len(results)
+        total_groups = len(pid_order)
+        auto_expand = total_groups == 1
+
+        for pid in pid_order:
+            players = pid_groups[pid]
+            name = pid_names[pid]
+            group = PlayerGroupItem(
                 self._scroll,
-                player=player,
-                season_info=season_info,
+                pid=pid,
+                player_name=name,
+                players=players,
+                season_map=self._season_map,
                 on_click=self._item_clicked,
+                expanded=auto_expand,
             )
-            item.pack(fill="x", pady=2)
-            self._items.append(item)
+            group.pack(fill="x", pady=2)
+            self._groups.append(group)
 
-        self._status_label.configure(text=f"{len(results)}명 검색됨")
-
-        # 2단계: 위젯 표시 완료 후 이미지 로드 시작 (스레드풀)
-        items_snapshot = list(self._items)
-        self.after(0, lambda: [item.start_loading() for item in items_snapshot if not item._destroyed])
+        if total_groups == 1:
+            # 단일 그룹: 바로 이미지 로드
+            items_snapshot = list(self._groups[0]._items)
+            self.after(0, lambda: [
+                item.start_loading() for item in items_snapshot if not item._destroyed
+            ])
+            self._status_label.configure(
+                text=f"{total_players}개 카드 검색됨"
+            )
+        else:
+            self._status_label.configure(
+                text=f"{total_players}명 / {total_groups}개 선수 검색됨"
+            )
 
     def _item_clicked(self, player: dict):
-        for item in self._items:
-            item.set_selected(item._player is player)
+        # 모든 그룹의 모든 아이템 선택 해제
+        for group in self._groups:
+            group.deselect_all()
+        # 클릭된 아이템 선택
+        target_spid = player.get("id", 0)
+        for group in self._groups:
+            found = group.find_and_select(target_spid)
+            if found:
+                break
         self._on_select(player)
 
     def _clear_list(self):
-        for item in self._items:
-            item.destroy()
-        self._items.clear()
+        for group in self._groups:
+            group.destroy()
+        self._groups.clear()
 
     # ──────────────────────────────────────────
     # 외부 데이터 설정
@@ -376,9 +570,9 @@ class PlayerSearchPanel(ctk.CTkFrame):
             if str(p.get("id", 0))[3:] == pid_str
         ]
         self._search_var.set("")
-        self._render_results(results[:100])
+        self._render_groups(results[:200])
         if results:
-            self._status_label.configure(text=f"PID {pid_str} — {len(results)}명 검색됨")
+            self._status_label.configure(text=f"PID {pid_str} — {len(results)}개 카드 검색됨")
 
         if auto_select_spid:
             # 레이아웃 강제 완료 후 스크롤·선택을 한 번에 처리 → 목록이 이미 맞는 위치에서 보임
@@ -387,12 +581,29 @@ class PlayerSearchPanel(ctk.CTkFrame):
 
     def _auto_select(self, spid: int):
         """렌더링된 목록에서 해당 SPID 항목을 자동 선택 후 스크롤."""
-        for item in self._items:
-            if item._player.get("id") == spid:
-                item.set_selected(True)
-                self._scroll_to_item(item)
-                self._on_select(item._player)
+        # 먼저 해당 SPID가 속한 그룹 찾기
+        target_group: Optional[PlayerGroupItem] = None
+        for group in self._groups:
+            for player in group._players:
+                if player.get("id") == spid:
+                    target_group = group
+                    break
+            if target_group:
                 break
+
+        if not target_group:
+            return
+
+        # 그룹이 접혀있으면 먼저 펼치기
+        if not target_group._expanded:
+            target_group._expand(start_loading=True)
+            self._scroll.update_idletasks()
+
+        # 아이템 선택
+        found_item = target_group.find_and_select(spid)
+        if found_item:
+            self._scroll_to_item(found_item)
+            self._on_select(found_item._player)
 
     def _scroll_to_item(self, item):
         """항목이 스크롤 영역 중앙에 오도록 스크롤."""
@@ -414,9 +625,8 @@ class PlayerSearchPanel(ctk.CTkFrame):
 
     def reload_thumb(self, spid: int):
         """특정 SPID 항목의 썸네일만 다시 로드."""
-        for item in self._items:
-            if item._player.get("id") == spid:
-                item.start_loading()
+        for group in self._groups:
+            if group.reload_thumb(spid):
                 break
 
     def set_spid_list(self, spid_list: list[dict]):

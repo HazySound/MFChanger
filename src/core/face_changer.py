@@ -20,6 +20,7 @@ class ChangeRecord:
     image_path: str
     changed_at: str
     backup_path: Optional[str] = None
+    result_path: Optional[str] = None   # 이 기록이 적용한 결과 스냅샷
 
 
 def _set_readonly(path: Path):
@@ -104,12 +105,23 @@ def replace_face(
     # 읽기전용 설정
     _set_readonly(dest_file)
 
+    # 적용 결과 스냅샷 저장 (백업 활성화 시)
+    result_path: Optional[str] = None
+    if config.backup_enabled:
+        backup_dir = config.backup_path / f"p{spid}"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        result_file = backup_dir / f"p{spid}_result_{timestamp}.png"
+        result_file.write_bytes(png_bytes)
+        result_path = str(result_file)
+
     return ChangeRecord(
         spid=spid,
         player_name=player_name,
         image_path=str(src_image_path),
         changed_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         backup_path=backup_path,
+        result_path=result_path,
     )
 
 
@@ -149,8 +161,19 @@ def restore_to_official(spid: int, player_name: str, config: Config) -> ChangeRe
 
     buf = io.BytesIO()
     img.save(buf, format="PNG")
-    dest_file.write_bytes(buf.getvalue())
+    png_bytes = buf.getvalue()
+    dest_file.write_bytes(png_bytes)
     _set_readonly(dest_file)
+
+    # 적용 결과 스냅샷 저장 (백업 활성화 시)
+    result_path: Optional[str] = None
+    if config.backup_enabled:
+        backup_dir = config.backup_path / f"p{spid}"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        result_file = backup_dir / f"p{spid}_result_{timestamp}.png"
+        result_file.write_bytes(png_bytes)
+        result_path = str(result_file)
 
     return ChangeRecord(
         spid=spid,
@@ -158,6 +181,7 @@ def restore_to_official(spid: int, player_name: str, config: Config) -> ChangeRe
         image_path="(공식 미페)",
         changed_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         backup_path=backup_path,
+        result_path=result_path,
     )
 
 
@@ -181,6 +205,18 @@ def restore_face(record: ChangeRecord, config: Config) -> bool:
         if dest_file.exists():
             dest_file.unlink()
         return False
+
+
+def delete_face_record(record: ChangeRecord):
+    """백업/결과 스냅샷 파일 삭제 (게임 파일 건드리지 않음). 이력 정리용."""
+    for path_str in (record.backup_path, record.result_path):
+        if path_str:
+            p = Path(path_str)
+            if p.exists():
+                try:
+                    p.unlink()
+                except Exception:
+                    pass
 
 
 def is_square_image(path: Path) -> bool:
