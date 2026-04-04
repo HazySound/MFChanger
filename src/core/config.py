@@ -9,6 +9,7 @@ API_KEY_PATH = Path.cwd() / "api_key.txt"
 
 DEFAULT_FC_PATH = r"C:\Nexon\EA SPORTS(TM) FC ONLINE"
 FACE_SUBPATH = r"_cache\live\externalAssets\common\playersAction"
+CREST_SUBPATH = r"_cache\live\externalAssets\common\crests"
 
 DEFAULTS = {
     "fc_online_path": DEFAULT_FC_PATH,
@@ -55,8 +56,17 @@ class Config:
         self.set("fc_online_path", value)
 
     @property
+    def assets_dir(self) -> Path:
+        """CDN 캐시 루트 (_cache/live/externalAssets/common)."""
+        return Path(self.fc_online_path) / r"_cache\live\externalAssets\common"
+
+    @property
     def face_dir(self) -> Path:
         return Path(self.fc_online_path) / FACE_SUBPATH
+
+    @property
+    def crest_dir(self) -> Path:
+        return Path(self.fc_online_path) / CREST_SUBPATH
 
     @property
     def backup_enabled(self) -> bool:
@@ -89,3 +99,6 @@ class Config:
 
     def is_fc_path_valid(self) -> bool:
         return self.face_dir.exists()
+
+    def is_crest_path_valid(self) -> bool:
+        return self.crest_dir.exists()

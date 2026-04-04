@@ -48,25 +48,30 @@ class FilterDropdown(tk.Toplevel):
         self._cat_expand_btns: dict[str, ctk.CTkButton] = {}
         self._season_btns: dict[int, ctk.CTkButton] = {}
 
+        self._anchor = anchor
         self._outside_bind_id: Optional[str] = None
+        self._configure_bind_id: Optional[str] = None
+        self._notify_job: Optional[str] = None
 
         self.withdraw()  # 위치 확정 전까지 숨김 (좌상단 깜빡임 방지)
         self.overrideredirect(True)
-        self.attributes("-topmost", True)
+        self.transient(main_window)   # 메인 윈도우 z-order 추종 (항상위에 X)
         self.configure(bg="#1a1a1a")
 
         self._build()
 
         # build + idletasks 이후 위치 계산 (위젯 크기 확정된 뒤)
         self.update_idletasks()
-        ax = anchor.winfo_rootx()
-        ay = anchor.winfo_rooty() + anchor.winfo_height() + 2
-        h = self.winfo_reqheight()
-        self.geometry(f"{self.WIDTH}x{h}+{ax}+{ay}")
+        self._reposition()
         self.deiconify()  # 올바른 위치에서 표시
 
         self.after(50, self._bind_outside_click)
         self.focus_set()
+
+        # 메인 윈도우 이동/최소화 시 드롭다운 위치 갱신 or 닫기
+        self._configure_bind_id = main_window.bind(
+            "<Configure>", self._on_main_configure, add="+"
+        )
 
     # ──────────────────────────────────────────
     # 팝업 관리
@@ -88,10 +93,45 @@ class FilterDropdown(tk.Toplevel):
         if not (px <= event.x_root <= px + pw and py <= event.y_root <= py + ph):
             self._close()
 
+    def _reposition(self):
+        """앵커 버튼 아래에 드롭다운 위치 계산."""
+        try:
+            ax = self._anchor.winfo_rootx()
+            ay = self._anchor.winfo_rooty() + self._anchor.winfo_height() + 2
+            h = self.winfo_reqheight()
+            self.geometry(f"{self.WIDTH}x{h}+{ax}+{ay}")
+        except Exception:
+            pass
+
+    def _on_main_configure(self, event):
+        """메인 윈도우 이동/크기변경/최소화 시 처리."""
+        if not self.winfo_exists():
+            return
+        if event.widget is not self._main_window:
+            return
+        try:
+            if self._main_window.state() in ("iconic", "withdrawn"):
+                self.withdraw()
+            else:
+                self.deiconify()
+                self._reposition()
+        except Exception:
+            pass
+
     def _close(self):
+        if self._notify_job:
+            try:
+                self.after_cancel(self._notify_job)
+            except Exception:
+                pass
         if self._outside_bind_id:
             try:
                 self._main_window.unbind("<Button-1>", self._outside_bind_id)
+            except Exception:
+                pass
+        if self._configure_bind_id:
+            try:
+                self._main_window.unbind("<Configure>", self._configure_bind_id)
             except Exception:
                 pass
         self._on_close()
@@ -459,6 +499,15 @@ class FilterDropdown(tk.Toplevel):
         self._notify()
 
     def _notify(self):
+        """80ms 디바운스 — 빠른 연속 클릭 시 마지막 한 번만 검색 갱신."""
+        if self._notify_job is not None:
+            self.after_cancel(self._notify_job)
+        self._notify_job = self.after(80, self._do_notify)
+
+    def _do_notify(self):
+        self._notify_job = None
+        if not self.winfo_exists():
+            return
         if self._in_search_mode:
             if self._selected_season_ids:
                 self._on_change({"__season_ids__": self._selected_season_ids})

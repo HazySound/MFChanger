@@ -1,5 +1,6 @@
 """선수 검색 결과 목록 위젯"""
 
+import concurrent.futures
 import threading
 from typing import Callable, Optional
 
@@ -13,6 +14,11 @@ BADGE_SIZE = 30
 
 _BLANK_THUMB: Optional[ctk.CTkImage] = None
 _BLANK_BADGE: Optional[ctk.CTkImage] = None
+
+# 이미지 로드 전용 스레드풀 — 최대 20개 동시 요청으로 CDN 과부하 방지
+_img_pool = concurrent.futures.ThreadPoolExecutor(
+    max_workers=20, thread_name_prefix="imgload"
+)
 
 
 def _blank(size: int) -> ctk.CTkImage:
@@ -41,18 +47,20 @@ class PlayerListItem(ctk.CTkFrame):
         player: dict,
         season_info: dict,
         on_click: Callable,
-        on_no_image: Callable,
         **kwargs,
     ):
         super().__init__(master, cursor="hand2", corner_radius=6, **kwargs)
         self._player = player
         self._on_click = on_click
-        self._on_no_image = on_no_image
         self._selected = False
         self._destroyed = False
+        self._futures: list[concurrent.futures.Future] = []
 
         spid = player.get("id", 0)
         name = player.get("name", "알 수 없음")
+        self._spid = spid
+        self._season_id = season_info.get("seasonId", 0)
+        self._season_img_url = season_info.get("seasonImg", "")
 
         self._thumb_label = ctk.CTkLabel(
             self, text="", image=_get_blank_thumb(), width=THUMB_SIZE, height=THUMB_SIZE
@@ -67,7 +75,6 @@ class PlayerListItem(ctk.CTkFrame):
         )
         name_label.pack(anchor="w")
 
-        # 시즌 뱃지만 표시 (시즌명/pid 텍스트 제거)
         season_row = ctk.CTkFrame(text_frame, fg_color="transparent")
         season_row.pack(anchor="w", pady=(1, 0))
 
@@ -81,54 +88,37 @@ class PlayerListItem(ctk.CTkFrame):
             widget.bind("<Enter>", self._hover_enter)
             widget.bind("<Leave>", self._hover_leave)
 
-        season_id = season_info.get("seasonId", 0)
-        season_img_url = season_info.get("seasonImg", "")
-
-        threading.Thread(
-            target=self._load_assets,
-            args=(spid, season_id, season_img_url),
-            daemon=True,
-        ).start()
-
-    def _load_assets(self, spid: int, season_id: int, season_img_url: str):
-        from src.api.nexon_api import get_player_image, get_season_badge
-        import threading as th
-
-        player_img = [None]
-        badge_img = [None]
-        done = [0]
-
-        def load_player():
-            player_img[0] = get_player_image(spid)
-            done[0] += 1
-            if done[0] == 2:
-                self._apply_assets(player_img[0], badge_img[0])
-
-        def load_badge():
-            badge_img[0] = get_season_badge(season_id, season_img_url)
-            done[0] += 1
-            if done[0] == 2:
-                self._apply_assets(player_img[0], badge_img[0])
-
-        th.Thread(target=load_player, daemon=True).start()
-        th.Thread(target=load_badge, daemon=True).start()
-
-    def _apply_assets(self, player_img, badge_img):
+    def start_loading(self):
+        """위젯 표시 후 호출 — 스레드풀에 이미지 로드 예약."""
         if self._destroyed:
             return
-        if player_img is None:
-            self.after(0, self._on_no_image)
+        f1 = _img_pool.submit(self._load_player)
+        f2 = _img_pool.submit(self._load_badge)
+        self._futures = [f1, f2]
+
+    def _load_player(self):
+        if self._destroyed:
             return
-        if player_img:
-            ctk_thumb = ctk.CTkImage(
-                light_image=player_img, dark_image=player_img, size=(THUMB_SIZE, THUMB_SIZE)
-            )
-            self.after(0, lambda i=ctk_thumb: self._set_thumb(i))
-        if badge_img:
-            ctk_badge = ctk.CTkImage(
-                light_image=badge_img, dark_image=badge_img, size=(BADGE_SIZE, BADGE_SIZE)
-            )
-            self.after(0, lambda i=ctk_badge: self._set_badge(i))
+        from src.api.nexon_api import get_player_image
+        img = get_player_image(self._spid)
+        if self._destroyed or img is None:
+            return
+        ctk_img = ctk.CTkImage(
+            light_image=img, dark_image=img, size=(THUMB_SIZE, THUMB_SIZE)
+        )
+        self.after(0, lambda i=ctk_img: self._set_thumb(i))
+
+    def _load_badge(self):
+        if self._destroyed:
+            return
+        from src.api.nexon_api import get_season_badge
+        img = get_season_badge(self._season_id, self._season_img_url)
+        if self._destroyed or img is None:
+            return
+        ctk_img = ctk.CTkImage(
+            light_image=img, dark_image=img, size=(BADGE_SIZE, BADGE_SIZE)
+        )
+        self.after(0, lambda i=ctk_img: self._set_badge(i))
 
     def _set_thumb(self, img: ctk.CTkImage):
         if not self._destroyed:
@@ -148,6 +138,9 @@ class PlayerListItem(ctk.CTkFrame):
 
     def destroy(self):
         self._destroyed = True
+        for f in self._futures:
+            f.cancel()
+        self._futures.clear()
         super().destroy()
 
     def _click(self, _event=None):
@@ -174,6 +167,7 @@ class PlayerSearchPanel(ctk.CTkFrame):
         self._spid_list: list[dict] = []
         self._season_map: dict[int, dict] = {}
         self._seasons: list[dict] = []
+        self._search_job: Optional[str] = None
 
         # 필터 상태: {category: set[year]} 또는 {"__season_ids__": set[int]}
         self._active_filters: dict = {}
@@ -238,7 +232,6 @@ class PlayerSearchPanel(ctk.CTkFrame):
             return
 
         root = self.nametowidget(".")
-        # 카테고리 필터만 복원 (season_ids는 드롭다운 내부 임시 상태)
         restore_filters = {
             cat: years
             for cat, years in self._active_filters.items()
@@ -255,7 +248,6 @@ class PlayerSearchPanel(ctk.CTkFrame):
 
     def _on_dropdown_closed(self):
         self._dropdown = None
-        # season_ids 필터는 드롭다운 닫힐 때 해제 (임시)
         if "__season_ids__" in self._active_filters:
             self._active_filters = {
                 cat: years
@@ -271,7 +263,6 @@ class PlayerSearchPanel(ctk.CTkFrame):
         self._do_search()
 
     def _update_filter_btn_style(self):
-        # season_ids 외 카테고리 필터가 있으면 활성
         cat_filters = {k: v for k, v in self._active_filters.items() if k != "__season_ids__"}
         active = bool(cat_filters)
         self._filter_btn.configure(
@@ -298,15 +289,14 @@ class PlayerSearchPanel(ctk.CTkFrame):
             )
             return
 
-        results = search_players(query, self._spid_list) if query.strip() else self._spid_list
+        # 전체 매칭 결과 (제한 없음) — 필터 후에 자름
+        results = search_players(query, self._spid_list) if query.strip() else list(self._spid_list)
 
         if "__season_ids__" in self._active_filters:
-            # 시즌 검색 모드: 특정 시즌 ID로 필터
             season_ids = self._active_filters["__season_ids__"]
             if season_ids:
                 results = [p for p in results if get_season_id(p.get("id", 0)) in season_ids]
         elif self._active_filters:
-            # 카테고리/연도 필터
             filtered = []
             for player in results:
                 spid = player.get("id", 0)
@@ -319,7 +309,7 @@ class PlayerSearchPanel(ctk.CTkFrame):
                 if "전체" not in selected_years:
                     year = info.get("year", "")
                     if "기타" in selected_years and not year:
-                        pass  # 연도 없는 항목 포함
+                        pass
                     elif year in selected_years:
                         pass
                     else:
@@ -327,8 +317,8 @@ class PlayerSearchPanel(ctk.CTkFrame):
                 filtered.append(player)
             results = filtered
 
-        results = results[:50]
-        self._render_results(results)
+        # 필터 적용 후 상위 100개 렌더
+        self._render_results(results[:100])
 
     def _render_results(self, results: list[dict]):
         from src.api.nexon_api import get_season_id
@@ -338,8 +328,7 @@ class PlayerSearchPanel(ctk.CTkFrame):
             self._status_label.configure(text="검색 결과가 없습니다.")
             return
 
-        self._status_label.configure(text=f"로딩 중... ({len(results)}명)")
-
+        # 1단계: 위젯 전부 생성 → 즉시 화면에 표시 (이미지 없이)
         for player in results:
             spid = player.get("id", 0)
             season_id = get_season_id(spid)
@@ -350,26 +339,20 @@ class PlayerSearchPanel(ctk.CTkFrame):
                 "category": "기타",
                 "year": "",
             })
-
             item = PlayerListItem(
                 self._scroll,
                 player=player,
                 season_info=season_info,
                 on_click=self._item_clicked,
-                on_no_image=lambda p=player: self._remove_no_image_item(p),
             )
             item.pack(fill="x", pady=2)
             self._items.append(item)
 
-    def _remove_no_image_item(self, player: dict):
-        to_remove = [i for i in self._items if i._player is player]
-        for item in to_remove:
-            self._items.remove(item)
-            item.destroy()
-        count = len(self._items)
-        self._status_label.configure(
-            text=f"{count}명 검색됨" if count else "검색 결과가 없습니다."
-        )
+        self._status_label.configure(text=f"{len(results)}명 검색됨")
+
+        # 2단계: 위젯 표시 완료 후 이미지 로드 시작 (스레드풀)
+        items_snapshot = list(self._items)
+        self.after(0, lambda: [item.start_loading() for item in items_snapshot if not item._destroyed])
 
     def _item_clicked(self, player: dict):
         for item in self._items:

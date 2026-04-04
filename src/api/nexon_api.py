@@ -1,8 +1,10 @@
 """Nexon Open API / FC Online CDN 클라이언트"""
 
 import json
+import shutil
 import threading
 import time
+from datetime import datetime
 from io import BytesIO
 from pathlib import Path
 from typing import Optional
@@ -10,8 +12,16 @@ from typing import Optional
 import requests
 from PIL import Image
 
-API_BASE = "https://open.api.nexon.com"   # 메타데이터 (API 키 필요)
-CDN_BASE = "https://fco.dn.nexoncdn.co.kr"  # 이미지 (공개 CDN)
+API_BASE = "https://nexon-api-proxy.cemigs1.workers.dev"  # CF Worker 프록시 (API 키 불필요)
+CDN_BASE = "https://fco.dn.nexoncdn.co.kr"               # 이미지 (공개 CDN)
+
+# 선수 이미지 CDN 경로 우선순위 (앞에서부터 순서대로 시도)
+_CDN_IMAGE_PATHS = [
+    "playersAction",
+    "players",
+    "playersActionHigh",
+    "playersHigh",
+]
 META_CACHE_PATH = Path.cwd() / ".cache"
 SPID_CACHE_FILE = META_CACHE_PATH / "spid.json"
 CACHE_TTL_DAYS = 30
@@ -27,12 +37,18 @@ _cdn_session.headers.update({"User-Agent": "MFChanger/1.0"})
 # 이미지 메모리 캐시 (spid -> PIL.Image)
 _image_cache: dict[int, Image.Image] = {}
 _image_cache_lock = threading.Lock()
-IMAGE_CACHE_MAX = 100
+IMAGE_CACHE_MAX = 300
+
+# 이미지 소스 캐시 (spid -> CDN 상대 경로, 예: "players/p123456.png")
+_image_source_cache: dict[int, str] = {}
+
+# not_found 이미지 캐시
+_not_found_image: Optional[Image.Image] = None
+_not_found_lock = threading.Lock()
 
 
 def _set_api_key(api_key: str):
-    if api_key:
-        _session.headers.update({"x-nxopen-api-key": api_key})
+    pass  # CF Worker가 API 키를 처리하므로 클라이언트에서 불필요
 
 
 # ──────────────────────────────────────────
@@ -40,10 +56,8 @@ def _set_api_key(api_key: str):
 # ──────────────────────────────────────────
 
 def _is_cache_fresh() -> bool:
-    if not SPID_CACHE_FILE.exists():
-        return False
-    age_days = (time.time() - SPID_CACHE_FILE.stat().st_mtime) / 86400
-    return age_days < CACHE_TTL_DAYS
+    """캐시 파일 존재 여부만 확인 (TTL 자동 갱신 없음 — 동기화는 수동)."""
+    return SPID_CACHE_FILE.exists()
 
 
 # ──────────────────────────────────────────
@@ -92,11 +106,9 @@ def fetch_season_meta(force: bool = False) -> list[dict]:
     cache_file = META_CACHE_PATH / "seasonid.json"
 
     if not force and cache_file.exists():
-        age_days = (time.time() - cache_file.stat().st_mtime) / 86400
-        if age_days < CACHE_TTL_DAYS:
-            with open(cache_file, "r", encoding="utf-8") as f:
-                raw = json.load(f)
-            return _enrich_seasons(raw)
+        with open(cache_file, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+        return _enrich_seasons(raw)
 
     try:
         url = f"{API_BASE}/static/fconline/meta/seasonid.json"
@@ -176,17 +188,52 @@ def fetch_spid_meta(force: bool = False) -> list[dict]:
         raise  # 캐시 자체가 없으면 예외 전파
 
 
+def sync_meta(backup_dir: Path) -> dict:
+    """
+    선수/시즌 메타데이터 강제 동기화.
+    1. 기존 캐시 파일을 backup_dir에 타임스탬프 백업
+    2. CF Worker에서 최신 파일 다운로드 (실패 시 예외 전파)
+    반환: {"spid": 선수수, "seasons": 시즌수}
+    """
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    meta_backup = backup_dir / "meta_backup"
+
+    season_cache = META_CACHE_PATH / "seasonid.json"
+    for cache_file, prefix in [(SPID_CACHE_FILE, "spid"), (season_cache, "seasonid")]:
+        if cache_file.exists():
+            meta_backup.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(cache_file, meta_backup / f"{prefix}_{timestamp}.json")
+
+    # 다운로드 실패 시 예외를 그대로 전파 (폴백 없음)
+    url_spid = f"{API_BASE}/static/fconline/meta/spid.json"
+    resp = _session.get(url_spid, timeout=15)
+    resp.raise_for_status()
+    spid_list = resp.json()
+    META_CACHE_PATH.mkdir(parents=True, exist_ok=True)
+    SPID_CACHE_FILE.write_text(
+        json.dumps(spid_list, ensure_ascii=False), encoding="utf-8"
+    )
+
+    url_season = f"{API_BASE}/static/fconline/meta/seasonid.json"
+    resp = _session.get(url_season, timeout=15)
+    resp.raise_for_status()
+    seasons_raw = resp.json()
+    (META_CACHE_PATH / "seasonid.json").write_text(
+        json.dumps(seasons_raw, ensure_ascii=False), encoding="utf-8"
+    )
+
+    return {"spid": len(spid_list), "seasons": len(seasons_raw)}
+
+
 def search_players(query: str, spid_list: list[dict]) -> list[dict]:
-    """이름으로 선수 검색 (대소문자/공백 무시)."""
+    """이름으로 선수 검색 (대소문자/공백 무시). 개수 제한 없음 — 호출부에서 처리."""
     q = query.strip().lower().replace(" ", "")
     if not q:
         return []
-    results = []
-    for entry in spid_list:
-        name = entry.get("name", "").lower().replace(" ", "")
-        if q in name:
-            results.append(entry)
-    return results[:50]  # 최대 50개
+    return [
+        entry for entry in spid_list
+        if q in entry.get("name", "").lower().replace(" ", "")
+    ]
 
 
 # ──────────────────────────────────────────
@@ -225,38 +272,106 @@ def prefetch_season_badges(seasons: list[dict]):
     threading.Thread(target=_worker, daemon=True).start()
 
 
+def _spid_to_pid(spid: int) -> int:
+    """spid 뒤 6자리에서 선수 고유 pid 추출. int() 변환으로 앞 0 제거."""
+    s = str(spid)
+    return int(s[-6:]) if len(s) > 6 else spid
+
+
+def _fetch_image_from_url(url: str) -> Optional[Image.Image]:
+    try:
+        resp = _cdn_session.get(url, timeout=5)
+        if resp.status_code == 200:
+            return Image.open(BytesIO(resp.content)).convert("RGBA")
+    except Exception:
+        pass
+    return None
+
+
 def get_player_image(spid: int) -> Optional[Image.Image]:
-    """선수 미페 이미지 원본 반환 (메모리 캐시 적용). 크기 조정은 호출부에서 처리."""
+    """선수 이미지 반환.
+    1차: 4개 CDN 경로를 spid 기준으로 시도
+    2차: pid 기준(players / playersHigh)으로 폴백
+    3차: players/not_found.png 폴백
+    결과는 메모리 캐시에 저장.
+    """
     with _image_cache_lock:
         if spid in _image_cache:
             return _image_cache[spid]
 
-    url = f"{CDN_BASE}/live/externalAssets/common/playersAction/p{spid}.png"
-    try:
-        resp = _cdn_session.get(url, timeout=10)
-        resp.raise_for_status()
-        img = Image.open(BytesIO(resp.content)).convert("RGBA")
-        # 원본 그대로 캐시 (resize 하지 않음)
-        with _image_cache_lock:
-            if len(_image_cache) >= IMAGE_CACHE_MAX:
-                oldest_key = next(iter(_image_cache))
-                del _image_cache[oldest_key]
-            _image_cache[spid] = img
+    # 1차 시도 — spid 기준
+    for cdn_path in _CDN_IMAGE_PATHS:
+        img = _fetch_image_from_url(
+            f"{CDN_BASE}/live/externalAssets/common/{cdn_path}/p{spid}.png"
+        )
+        if img is not None:
+            _cache_image(spid, img, source=f"{cdn_path}/p{spid}.png")
+            return img
 
-        return img
-    except Exception:
-        return None
+    # 2차 시도 — pid 기준 (spid 뒤 6자리, 앞 0 제거)
+    pid = _spid_to_pid(spid)
+    if pid != spid:
+        for cdn_path in ("players", "playersHigh"):
+            img = _fetch_image_from_url(
+                f"{CDN_BASE}/live/externalAssets/common/{cdn_path}/p{pid}.png"
+            )
+            if img is not None:
+                _cache_image(spid, img, source=f"{cdn_path}/p{pid}.png")
+                return img
+
+    # 3차 시도 — not_found.png 폴백
+    not_found = _get_not_found_image()
+    if not_found is not None:
+        _cache_image(spid, not_found, source="players/not_found.png")
+        return not_found
+
+    return None
+
+
+def _get_not_found_image() -> Optional[Image.Image]:
+    """players/not_found.png 로드 (전역 단일 캐시)."""
+    global _not_found_image
+    with _not_found_lock:
+        if _not_found_image is not None:
+            return _not_found_image
+    img = _fetch_image_from_url(
+        f"{CDN_BASE}/live/externalAssets/common/players/not_found.png"
+    )
+    if img is not None:
+        with _not_found_lock:
+            _not_found_image = img
+    return img
+
+
+def get_image_source(spid: int) -> Optional[str]:
+    """spid에 대해 실제 이미지를 로드한 CDN 상대 경로 반환.
+    예: 'players/p123456.png', 'playersAction/p200123456.png'
+    이미지가 아직 로드되지 않은 경우 None 반환."""
+    with _image_cache_lock:
+        return _image_source_cache.get(spid)
+
+
+def _cache_image(spid: int, img: Optional[Image.Image], source: str = ""):
+    with _image_cache_lock:
+        if len(_image_cache) >= IMAGE_CACHE_MAX:
+            oldest_key = next(iter(_image_cache))
+            del _image_cache[oldest_key]
+        _image_cache[spid] = img
+        if source:
+            _image_source_cache[spid] = source
 
 
 def download_original_image(spid: int) -> Optional[bytes]:
-    """원본 해상도 이미지 bytes 반환."""
-    url = f"{CDN_BASE}/live/externalAssets/common/playersAction/p{spid}.png"
-    try:
-        resp = _cdn_session.get(url, timeout=15)
-        resp.raise_for_status()
-        return resp.content
-    except Exception:
-        return None
+    """원본 해상도 이미지 bytes 반환. 4개 CDN 경로를 순서대로 시도."""
+    for cdn_path in _CDN_IMAGE_PATHS:
+        url = f"{CDN_BASE}/live/externalAssets/common/{cdn_path}/p{spid}.png"
+        try:
+            resp = _cdn_session.get(url, timeout=15)
+            if resp.status_code == 200:
+                return resp.content
+        except Exception:
+            continue
+    return None
 
 
 def clear_image_cache():

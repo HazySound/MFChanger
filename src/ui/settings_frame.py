@@ -1,9 +1,9 @@
 """설정 화면 프레임"""
 
 import threading
-import webbrowser
 from pathlib import Path
 from tkinter import filedialog, messagebox
+from typing import Callable
 
 import customtkinter as ctk
 
@@ -13,9 +13,13 @@ from version import __version__
 
 
 class SettingsFrame(ctk.CTkFrame):
-    def __init__(self, master, config: Config, **kwargs):
+    def __init__(self, master, config: Config, on_install: Callable[[str], None],
+                 on_sync_done: Callable = None, **kwargs):
         super().__init__(master, fg_color="transparent", **kwargs)
         self._config = config
+        self._on_install = on_install  # App에서 주입 — 실제 다운로드는 App이 처리
+        self._on_sync_done = on_sync_done  # 동기화 완료 시 App이 main_frame 갱신
+        self._update_result: dict = {}
         self._build()
 
     def _build(self):
@@ -75,6 +79,27 @@ class SettingsFrame(ctk.CTkFrame):
         ctk.CTkButton(backup_btn_frame, text="저장", width=80, command=self._save_backup_path).pack(side="left")
         row += 1
 
+        # ── 선수 데이터 동기화 ──
+        self._section_label(scroll, "선수 데이터", row)
+        row += 1
+
+        sync_btn_frame = ctk.CTkFrame(scroll, fg_color="transparent")
+        sync_btn_frame.grid(row=row, column=0, columnspan=2, sticky="w", padx=16, pady=(0, 4))
+
+        self._sync_btn = ctk.CTkButton(
+            sync_btn_frame, text="데이터 동기화", width=120, command=self._sync_meta
+        )
+        self._sync_btn.pack(side="left", padx=(0, 12))
+
+        self._sync_status = ctk.CTkLabel(
+            sync_btn_frame, text="선수 목록과 시즌 정보를 최신으로 업데이트합니다.",
+            font=ctk.CTkFont(size=11), text_color="gray"
+        )
+        self._sync_status.pack(side="left")
+        row += 1
+
+        row += 1  # 여백
+
         # ── 업데이트 설정 ──
         self._section_label(scroll, "업데이트", row)
         row += 1
@@ -88,19 +113,39 @@ class SettingsFrame(ctk.CTkFrame):
             self._update_switch.select()
         row += 1
 
-        update_frame = ctk.CTkFrame(scroll, fg_color="transparent")
-        update_frame.grid(row=row, column=0, columnspan=2, sticky="w", padx=16, pady=(0, 4))
+        update_btn_frame = ctk.CTkFrame(scroll, fg_color="transparent")
+        update_btn_frame.grid(row=row, column=0, columnspan=2, sticky="w", padx=16, pady=(0, 4))
 
-        self._update_btn = ctk.CTkButton(
-            update_frame, text="업데이트 확인", width=120, command=self._check_update
+        self._check_btn = ctk.CTkButton(
+            update_btn_frame, text="업데이트 확인", width=120, command=self._check_update
         )
-        self._update_btn.pack(side="left", padx=(0, 12))
+        self._check_btn.pack(side="left", padx=(0, 8))
+
+        # 업데이트 있을 때만 표시
+        self._install_btn = ctk.CTkButton(
+            update_btn_frame,
+            text="업데이트 설치",
+            width=120,
+            fg_color="#4CAF50",
+            hover_color="#388E3C",
+            command=self._on_install_click,
+        )
+
+        self._release_page_btn = ctk.CTkButton(
+            update_btn_frame,
+            text="릴리즈 페이지",
+            width=110,
+            fg_color="transparent",
+            border_width=1,
+            text_color=("gray10", "gray90"),
+            command=self._open_release_page,
+        )
+        row += 1
 
         self._update_status = ctk.CTkLabel(
-            update_frame, text=f"현재 버전: v{__version__}", font=ctk.CTkFont(size=12), text_color="gray"
+            scroll, text=f"현재 버전: v{__version__}", font=ctk.CTkFont(size=12), text_color="gray"
         )
-        self._update_status.pack(side="left")
-        row += 1
+        self._update_status.grid(row=row, column=0, columnspan=2, sticky="w", padx=16, pady=(0, 8))
 
     # ──────────────────────────────────────────
     # 헬퍼
@@ -110,6 +155,40 @@ class SettingsFrame(ctk.CTkFrame):
         ctk.CTkLabel(
             parent, text=text, font=ctk.CTkFont(size=14, weight="bold")
         ).grid(row=row, column=0, columnspan=2, sticky="w", padx=12, pady=(16, 6))
+
+    # ──────────────────────────────────────────
+    # 선수 데이터 동기화
+    # ──────────────────────────────────────────
+
+    def _sync_meta(self):
+        from src.api import nexon_api
+        self._sync_btn.configure(state="disabled", text="동기화 중...")
+        self._sync_status.configure(text="서버에서 최신 데이터를 받아오는 중...", text_color="gray")
+
+        def _worker():
+            try:
+                result = nexon_api.sync_meta(self._config.backup_path)
+                self.after(0, lambda r=result: self._on_sync_complete(r))
+            except Exception as e:
+                msg = str(e)
+                self.after(0, lambda m=msg: self._on_sync_error(m))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _on_sync_complete(self, result: dict):
+        spid_count = result.get("spid", 0)
+        season_count = result.get("seasons", 0)
+        self._sync_btn.configure(state="normal", text="데이터 동기화")
+        self._sync_status.configure(
+            text=f"완료 — 선수 {spid_count:,}명 / 시즌 {season_count}개",
+            text_color="#4CAF50",
+        )
+        if self._on_sync_done:
+            self._on_sync_done()
+
+    def _on_sync_error(self, msg: str):
+        self._sync_btn.configure(state="normal", text="데이터 동기화")
+        self._sync_status.configure(text=f"실패: {msg}", text_color="#F44336")
 
     # ──────────────────────────────────────────
     # FC온라인 경로
@@ -158,8 +237,10 @@ class SettingsFrame(ctk.CTkFrame):
         self._config.check_update_on_start = bool(self._update_switch.get())
 
     def _check_update(self):
-        self._update_btn.configure(state="disabled", text="확인 중...")
+        self._check_btn.configure(state="disabled", text="확인 중...")
         self._update_status.configure(text="GitHub에서 확인 중...", text_color="gray")
+        self._install_btn.pack_forget()
+        self._release_page_btn.pack_forget()
 
         def _worker():
             result = updater.check_for_update()
@@ -168,19 +249,38 @@ class SettingsFrame(ctk.CTkFrame):
         threading.Thread(target=_worker, daemon=True).start()
 
     def _on_update_result(self, result):
-        self._update_btn.configure(state="normal", text="업데이트 확인")
+        self._check_btn.configure(state="normal", text="업데이트 확인")
+
         if result:
+            self._update_result = result
             version = result["version"]
-            url = result["url"]
+            has_download = bool(result.get("download_url")) and updater.IS_FROZEN
+
             self._update_status.configure(
-                text=f"새 버전 있음: {version}", text_color="#FF9800"
+                text=f"새 버전 {version}이(가) 있습니다!", text_color="#FF9800"
             )
-            if messagebox.askyesno(
-                "업데이트 가능",
-                f"새 버전 {version}이(가) 있습니다.\n다운로드 페이지를 열까요?"
-            ):
-                updater.open_release_page(url)
+            if has_download:
+                self._install_btn.pack(side="left", padx=(0, 8))
+            self._release_page_btn.pack(side="left")
         else:
+            self._update_result = {}
             self._update_status.configure(
                 text=f"최신 버전입니다. (v{__version__})", text_color="#4CAF50"
             )
+
+    def _on_install_click(self):
+        """설치 버튼 클릭 → App에 위임 (App이 오버레이 + 다운로드 처리)."""
+        download_url = self._update_result.get("download_url", "")
+        if download_url:
+            self._update_status.configure(text="다운로드 준비 중...", text_color="gray")
+            self._on_install(download_url)
+
+    def on_download_error(self, msg: str):
+        """App에서 다운로드 실패 시 호출."""
+        self._install_btn.configure(state="normal")
+        self._update_status.configure(text=f"다운로드 실패: {msg}", text_color="#F44336")
+
+    def _open_release_page(self):
+        url = self._update_result.get("url", "")
+        if url:
+            updater.open_release_page(url)

@@ -121,6 +121,7 @@ class MainFrame(ctk.CTkFrame):
 
         self._preview_new = ImagePreview(frame, size=160, label_text="교체할 이미지")
         self._preview_new.grid(row=0, column=0, padx=(20, 8), pady=10)
+        self._preview_new.enable_drop(self._set_image)
 
         btn_frame = ctk.CTkFrame(frame, fg_color="transparent")
         btn_frame.grid(row=0, column=1, padx=(8, 20), pady=10, sticky="nsew")
@@ -194,6 +195,31 @@ class MainFrame(ctk.CTkFrame):
         self._search_panel.set_spid_list(spid_list)
         self._search_panel.set_season_data(seasons, season_map)
 
+    def reload_meta(self):
+        """동기화 후 호출 — 캐시 재로드 후 현재 검색 결과 즉시 갱신."""
+        self._search_panel.set_loading(True)
+
+        def _worker():
+            try:
+                spid_list = nexon_api.fetch_spid_meta()
+                seasons = nexon_api.fetch_season_meta()
+                season_map = nexon_api.build_season_map(seasons)
+                nexon_api.prefetch_season_badges(seasons)
+                self.after(0, lambda: self._on_meta_reloaded(spid_list, seasons, season_map))
+            except Exception as e:
+                msg = str(e)
+                self.after(0, lambda m=msg: self._search_panel._status_label.configure(
+                    text=f"데이터 로딩 실패: {m}"
+                ))
+            finally:
+                self.after(0, lambda: self._search_panel.set_loading(False))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _on_meta_reloaded(self, spid_list: list, seasons: list, season_map: dict):
+        self._on_meta_loaded(spid_list, seasons, season_map)
+        self._search_panel._do_search()  # 현재 검색어/필터로 즉시 재검색
+
     # ──────────────────────────────────────────
     # 이벤트 핸들러
     # ──────────────────────────────────────────
@@ -259,13 +285,29 @@ class MainFrame(ctk.CTkFrame):
         if not self._selected_player:
             return
         spid = self._selected_player.get("id", 0)
-        face_file = self._config.face_dir / f"p{spid}.png"
 
-        if face_file.exists():
-            # 파일 선택 상태로 탐색기 열기
-            subprocess.Popen(f'explorer /select,"{face_file}"')
+        if self._preview_mode == "현재 미페":
+            # 현재 미페 모드: 게임의 playersAction 로컬 파일
+            target = self._config.face_dir / f"p{spid}.png"
+            if target.exists():
+                subprocess.Popen(f'explorer /select,"{target}"')
+            elif self._config.face_dir.exists():
+                subprocess.Popen(f'explorer "{self._config.face_dir}"')
+            else:
+                messagebox.showwarning("경로 없음", f"미페 폴더를 찾을 수 없습니다.\n{self._config.face_dir}")
         else:
-            # 파일 없으면 폴더만 열기
+            # 공식 미페 모드: 실제 이미지를 로드한 CDN 경로 기준
+            source = nexon_api.get_image_source(spid)
+            if source:
+                local_file = self._config.assets_dir / source
+                if local_file.exists():
+                    subprocess.Popen(f'explorer /select,"{local_file}"')
+                    return
+                folder = local_file.parent
+                if folder.exists():
+                    subprocess.Popen(f'explorer "{folder}"')
+                    return
+            # 소스 정보 없거나 로컬에 없으면 playersAction 폴더로 폴백
             face_dir = self._config.face_dir
             if face_dir.exists():
                 subprocess.Popen(f'explorer "{face_dir}"')
