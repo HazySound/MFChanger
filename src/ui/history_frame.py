@@ -13,6 +13,7 @@ from src.core import history, face_changer, crest_changer
 from src.core.config import Config
 from src.core.face_changer import ChangeRecord
 from src.core.crest_changer import CrestChangeRecord
+from src.ui import font_manager as fm
 
 _THUMB = 52  # 썸네일 픽셀 크기
 
@@ -50,7 +51,7 @@ class HistoryFrame(ctk.CTkFrame):
         top = ctk.CTkFrame(self, fg_color="transparent")
         top.pack(fill="x", padx=10, pady=(10, 4))
 
-        ctk.CTkLabel(top, text="변경 이력", font=ctk.CTkFont(size=16, weight="bold")).pack(side="left")
+        ctk.CTkLabel(top, text="변경 이력", font=fm.font(16, "bold")).pack(side="left")
         ctk.CTkButton(top, text="새로고침", width=90, command=self.refresh).pack(side="right")
 
         self._scroll = ctk.CTkScrollableFrame(self)
@@ -81,7 +82,7 @@ class HistoryFrame(ctk.CTkFrame):
         else:
             ctk.CTkLabel(
                 self._scroll, text="미페 변경 이력이 없습니다.", text_color="gray",
-                font=ctk.CTkFont(size=11),
+                font=fm.font(11),
             ).pack(anchor="w", padx=16, pady=(0, 4))
 
         # ── 크레스트 변경 이력 섹션 ──
@@ -96,7 +97,7 @@ class HistoryFrame(ctk.CTkFrame):
         else:
             ctk.CTkLabel(
                 self._scroll, text="크레스트 변경 이력이 없습니다.", text_color="gray",
-                font=ctk.CTkFont(size=11),
+                font=fm.font(11),
             ).pack(anchor="w", padx=16, pady=(0, 4))
 
     # ──────────────────────────────────────────
@@ -110,7 +111,7 @@ class HistoryFrame(ctk.CTkFrame):
         ctk.CTkLabel(
             header,
             text=f"{title} ({count})",
-            font=ctk.CTkFont(size=13, weight="bold"),
+            font=fm.font(13, "bold"),
         ).pack(side="left", padx=4)
 
         if count > 0:
@@ -121,7 +122,7 @@ class HistoryFrame(ctk.CTkFrame):
                 height=26,
                 fg_color="#F44336",
                 hover_color="#C62828",
-                font=ctk.CTkFont(size=11),
+                font=fm.font(11),
                 command=restore_all_cmd,
             ).pack(side="right", padx=4)
 
@@ -137,14 +138,14 @@ class HistoryFrame(ctk.CTkFrame):
         # ID
         ctk.CTkLabel(
             row, text=f"p{record.spid}",
-            font=ctk.CTkFont(size=13, weight="bold"), width=80,
+            font=fm.font(13, "bold"), width=80,
         ).grid(row=0, column=0, padx=(12, 4), pady=10, sticky="w")
 
         # 원본 썸네일 (백업 파일)
         before_label = self._make_thumb_label(row)
         before_label.grid(row=0, column=1, padx=4, pady=10)
 
-        ctk.CTkLabel(row, text="→", font=ctk.CTkFont(size=14)).grid(row=0, column=2, padx=2)
+        ctk.CTkLabel(row, text="→", font=fm.font(14)).grid(row=0, column=2, padx=2)
 
         # 변경후 썸네일 (현재 게임 파일)
         after_label = self._make_thumb_label(row)
@@ -153,10 +154,10 @@ class HistoryFrame(ctk.CTkFrame):
         # 날짜 정보
         info = ctk.CTkFrame(row, fg_color="transparent")
         info.grid(row=0, column=4, sticky="ew", padx=8, pady=10)
-        ctk.CTkLabel(info, text=record.player_name, font=ctk.CTkFont(size=12)).pack(anchor="w")
+        ctk.CTkLabel(info, text=record.player_name, font=fm.font(12)).pack(anchor="w")
         ctk.CTkLabel(
             info, text=f"변경: {record.changed_at}",
-            font=ctk.CTkFont(size=11), text_color="gray",
+            font=fm.font(11), text_color="gray",
         ).pack(anchor="w")
 
         # 버튼
@@ -166,7 +167,7 @@ class HistoryFrame(ctk.CTkFrame):
             width=64, height=32,
             fg_color="#607D8B" if has_backup else "#F44336",
             hover_color="#455A64" if has_backup else "#C62828",
-            font=ctk.CTkFont(size=11),
+            font=fm.font(11),
             command=lambda r=record: self._restore_face(r),
         )
         btn.grid(row=0, column=5, padx=4, pady=10)
@@ -178,7 +179,7 @@ class HistoryFrame(ctk.CTkFrame):
             fg_color=("gray70", "gray30"),
             hover_color=("gray60", "gray40"),
             text_color=("gray10", "gray90"),
-            font=ctk.CTkFont(size=11),
+            font=fm.font(11),
             command=lambda d=backup_dir: _open_folder(d),
         ).grid(row=0, column=6, padx=(0, 10), pady=10)
 
@@ -196,14 +197,14 @@ class HistoryFrame(ctk.CTkFrame):
         # ID
         ctk.CTkLabel(
             row, text=f"c{record.crest_id}",
-            font=ctk.CTkFont(size=13, weight="bold"), width=80,
+            font=fm.font(13, "bold"), width=80,
         ).grid(row=0, column=0, padx=(12, 4), pady=10, sticky="w")
 
         # 원본 썸네일 (dark/large 백업)
         before_label = self._make_thumb_label(row)
         before_label.grid(row=0, column=1, padx=4, pady=10)
 
-        ctk.CTkLabel(row, text="→", font=ctk.CTkFont(size=14)).grid(row=0, column=2, padx=2)
+        ctk.CTkLabel(row, text="→", font=fm.font(14)).grid(row=0, column=2, padx=2)
 
         # 변경후 썸네일 (현재 게임 파일 dark/large)
         after_label = self._make_thumb_label(row)
@@ -213,10 +214,10 @@ class HistoryFrame(ctk.CTkFrame):
         info = ctk.CTkFrame(row, fg_color="transparent")
         info.grid(row=0, column=4, sticky="ew", padx=8, pady=10)
         src_name = Path(record.image_path).name if record.image_path else ""
-        ctk.CTkLabel(info, text=src_name, font=ctk.CTkFont(size=12)).pack(anchor="w")
+        ctk.CTkLabel(info, text=src_name, font=fm.font(12)).pack(anchor="w")
         ctk.CTkLabel(
             info, text=f"변경: {record.changed_at}",
-            font=ctk.CTkFont(size=11), text_color="gray",
+            font=fm.font(11), text_color="gray",
         ).pack(anchor="w")
 
         # 버튼
@@ -226,7 +227,7 @@ class HistoryFrame(ctk.CTkFrame):
             width=64, height=32,
             fg_color="#607D8B" if has_backup else "#F44336",
             hover_color="#455A64" if has_backup else "#C62828",
-            font=ctk.CTkFont(size=11),
+            font=fm.font(11),
             command=lambda r=record: self._restore_crest(r),
         )
         btn.grid(row=0, column=5, padx=4, pady=10)
@@ -238,7 +239,7 @@ class HistoryFrame(ctk.CTkFrame):
             fg_color=("gray70", "gray30"),
             hover_color=("gray60", "gray40"),
             text_color=("gray10", "gray90"),
-            font=ctk.CTkFont(size=11),
+            font=fm.font(11),
             command=lambda d=backup_dir: _open_folder(d),
         ).grid(row=0, column=6, padx=(0, 10), pady=10)
 
@@ -263,7 +264,7 @@ class HistoryFrame(ctk.CTkFrame):
         return ctk.CTkLabel(
             parent, text="…", width=_THUMB, height=_THUMB,
             fg_color=("gray80", "gray25"), corner_radius=4,
-            font=ctk.CTkFont(size=10), text_color="gray",
+            font=fm.font(10), text_color="gray",
         )
 
     def _load_thumb_async(self, label: ctk.CTkLabel, path: Optional[str]):

@@ -6,6 +6,7 @@ from typing import Callable, Optional
 import customtkinter as ctk
 
 from src.api.nexon_api import CATEGORY_ORDER
+from src.ui import font_manager as fm
 
 
 class FilterDropdown(tk.Toplevel):
@@ -154,14 +155,14 @@ class FilterDropdown(tk.Toplevel):
         header.pack(fill="x", padx=12, pady=(10, 6))
         ctk.CTkLabel(
             header, text="시즌 필터",
-            font=ctk.CTkFont(size=13, weight="bold"),
+            font=fm.font(13, "bold"),
         ).pack(side="left")
         ctk.CTkButton(
             header, text="전체 초기화", width=72, height=26,
             fg_color="transparent",
             hover_color=("gray80", "gray30"),
             text_color=("gray50", "gray60"),
-            font=ctk.CTkFont(size=11),
+            font=fm.font(11),
             command=self._reset,
         ).pack(side="right")
 
@@ -188,7 +189,7 @@ class FilterDropdown(tk.Toplevel):
             fg_color="transparent",
             hover_color=("gray80", "gray30"),
             text_color=("gray50", "gray60"),
-            font=ctk.CTkFont(size=12),
+            font=fm.font(12),
             command=lambda: self._season_search_var.set(""),
         ).grid(row=0, column=1)
 
@@ -229,7 +230,7 @@ class FilterDropdown(tk.Toplevel):
 
         expand_btn = ctk.CTkButton(
             header, text="▶", width=28, height=32,
-            font=ctk.CTkFont(size=10),
+            font=fm.font(10),
             fg_color="transparent",
             hover_color=("gray80", "gray30"),
             text_color=("gray40", "gray70"),
@@ -244,7 +245,7 @@ class FilterDropdown(tk.Toplevel):
             fg_color="transparent",
             hover_color=("gray80", "gray30"),
             text_color=("gray10", "gray95"),
-            font=ctk.CTkFont(size=12, weight="bold"),
+            font=fm.font(12, "bold"),
             command=lambda c=cat: self._toggle_expand(c),
         ).grid(row=0, column=1, sticky="ew", padx=2, pady=2)
 
@@ -252,7 +253,7 @@ class FilterDropdown(tk.Toplevel):
         # pack/unpack 대신 configure()만 사용해서 geometry 재계산 루프 방지
         sel_btn = ctk.CTkButton(
             header, text="", width=64, height=24,
-            font=ctk.CTkFont(size=10, weight="bold"),
+            font=fm.font(10, "bold"),
             fg_color="transparent",
             hover_color=("gray88", "gray22"),  # 헤더 배경과 동일 → 비활성 시 invisible
             text_color="white",
@@ -298,7 +299,7 @@ class FilterDropdown(tk.Toplevel):
                 parent,
                 text=label,
                 width=52, height=26,
-                font=ctk.CTkFont(size=11),
+                font=fm.font(11),
                 fg_color="#4CAF50" if selected else "transparent",
                 text_color="white" if selected else ("gray20", "gray90"),
                 border_width=1,
@@ -428,7 +429,7 @@ class FilterDropdown(tk.Toplevel):
         if not matches:
             ctk.CTkLabel(
                 self._search_results_grid, text="검색 결과 없음",
-                font=ctk.CTkFont(size=11), text_color="gray",
+                font=fm.font(11), text_color="gray",
             ).grid(row=0, column=0, columnspan=3, padx=8, pady=16)
             return
 
@@ -440,7 +441,7 @@ class FilterDropdown(tk.Toplevel):
             btn = ctk.CTkButton(
                 self._search_results_grid,
                 text=label, width=80, height=28,
-                font=ctk.CTkFont(size=11),
+                font=fm.font(11),
                 fg_color="#2196F3" if selected else "transparent",
                 text_color="white" if selected else ("gray20", "gray90"),
                 border_width=1,
@@ -460,7 +461,7 @@ class FilterDropdown(tk.Toplevel):
             ctk.CTkLabel(
                 self._search_results_grid,
                 text=f"... 외 {len(matches) - 24}개",
-                font=ctk.CTkFont(size=10), text_color="gray",
+                font=fm.font(10), text_color="gray",
             ).grid(row=extra_row, column=0, columnspan=3, pady=(0, 4))
 
     def _toggle_season(self, season_id: int):

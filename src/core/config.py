@@ -17,6 +17,7 @@ DEFAULTS = {
     "backup_path": str(Path.home() / "MFChanger_backup"),
     "check_update_on_start": True,
     "theme": "dark",
+    "ui_scale": 1.5,
 }
 
 
@@ -91,6 +92,14 @@ class Config:
     @check_update_on_start.setter
     def check_update_on_start(self, value: bool):
         self.set("check_update_on_start", value)
+
+    @property
+    def ui_scale(self) -> float:
+        return float(self._data.get("ui_scale", 1.5))
+
+    @ui_scale.setter
+    def ui_scale(self, value: float):
+        self.set("ui_scale", value)
 
     def get_api_key(self) -> str:
         if API_KEY_PATH.exists():

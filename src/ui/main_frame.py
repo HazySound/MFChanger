@@ -14,6 +14,7 @@ from src.core.config import Config
 from src.core import face_changer, history
 from src.ui.components.image_preview import ImagePreview
 from src.ui.components.player_list import PlayerSearchPanel
+from src.ui import font_manager as fm
 
 
 class MainFrame(ctk.CTkFrame):
@@ -66,7 +67,7 @@ class MainFrame(ctk.CTkFrame):
             preview_wrap,
             values=["현재 미페", "공식 미페"],
             command=self._on_preview_toggle,
-            font=ctk.CTkFont(size=11),
+            font=fm.font(11),
             height=26,
         )
         self._preview_toggle.set("현재 미페")
@@ -80,22 +81,22 @@ class MainFrame(ctk.CTkFrame):
         info_frame.grid(row=0, column=1, padx=(8, 20), pady=10, sticky="nsew")
 
         self._player_name_label = ctk.CTkLabel(
-            info_frame, text="선수를 선택하세요", font=ctk.CTkFont(size=16, weight="bold")
+            info_frame, text="선수를 선택하세요", font=fm.font(16, "bold")
         )
         self._player_name_label.pack(anchor="w", pady=(16, 4))
 
         self._player_spid_label = ctk.CTkLabel(
-            info_frame, text="", font=ctk.CTkFont(size=12), text_color="gray"
+            info_frame, text="", font=fm.font(12), text_color="gray"
         )
         self._player_spid_label.pack(anchor="w")
 
         self._player_season_label = ctk.CTkLabel(
-            info_frame, text="", font=ctk.CTkFont(size=12), text_color="gray"
+            info_frame, text="", font=fm.font(12), text_color="gray"
         )
         self._player_season_label.pack(anchor="w", pady=(2, 0))
 
         self._player_status_label = ctk.CTkLabel(
-            info_frame, text="", font=ctk.CTkFont(size=11), text_color="#FF9800"
+            info_frame, text="", font=fm.font(11), text_color="#FF9800"
         )
         self._player_status_label.pack(anchor="w", pady=(6, 0))
 
@@ -135,12 +136,12 @@ class MainFrame(ctk.CTkFrame):
         select_btn.pack(anchor="w", pady=(16, 8))
 
         self._image_info_label = ctk.CTkLabel(
-            btn_frame, text="JPG, PNG, BMP, WEBP 지원", font=ctk.CTkFont(size=11), text_color="gray"
+            btn_frame, text="JPG, PNG, BMP, WEBP 지원", font=fm.font(11), text_color="gray"
         )
         self._image_info_label.pack(anchor="w")
 
         self._image_warn_label = ctk.CTkLabel(
-            btn_frame, text="", font=ctk.CTkFont(size=11), text_color="#FF9800"
+            btn_frame, text="", font=fm.font(11), text_color="#FF9800"
         )
         self._image_warn_label.pack(anchor="w", pady=(4, 0))
 
@@ -155,7 +156,7 @@ class MainFrame(ctk.CTkFrame):
             frame,
             text="미페 교체 실행",
             height=48,
-            font=ctk.CTkFont(size=15, weight="bold"),
+            font=fm.font(15, "bold"),
             fg_color="#2196F3",
             hover_color="#1976D2",
             command=self._apply_change,
@@ -163,7 +164,7 @@ class MainFrame(ctk.CTkFrame):
         )
         self._apply_btn.grid(row=0, column=0, padx=10, pady=8, sticky="ew")
 
-        self._result_label = ctk.CTkLabel(frame, text="", font=ctk.CTkFont(size=12))
+        self._result_label = ctk.CTkLabel(frame, text="", font=fm.font(12))
         self._result_label.grid(row=1, column=0, padx=10)
 
     # ──────────────────────────────────────────

@@ -9,6 +9,7 @@ import customtkinter as ctk
 
 from src.core.config import Config
 from src.core import updater
+from src.ui import font_manager as fm
 from version import __version__
 
 
@@ -44,7 +45,7 @@ class SettingsFrame(ctk.CTkFrame):
         ctk.CTkButton(fc_btn_frame, text="폴더 선택", width=100, command=self._browse_fc_path).pack(side="left", padx=(0, 8))
         ctk.CTkButton(fc_btn_frame, text="저장", width=80, command=self._save_fc_path).pack(side="left")
 
-        self._fc_path_status = ctk.CTkLabel(scroll, text="", font=ctk.CTkFont(size=11))
+        self._fc_path_status = ctk.CTkLabel(scroll, text="", font=fm.font(11))
         self._fc_path_status.grid(row=row, column=1, sticky="e", padx=16)
         row += 1
 
@@ -63,7 +64,7 @@ class SettingsFrame(ctk.CTkFrame):
             self._backup_switch.select()
         row += 1
 
-        ctk.CTkLabel(scroll, text="백업 저장 위치", font=ctk.CTkFont(size=12)).grid(
+        ctk.CTkLabel(scroll, text="백업 저장 위치", font=fm.font(12)).grid(
             row=row, column=0, sticky="w", padx=16, pady=(0, 4)
         )
         row += 1
@@ -79,6 +80,34 @@ class SettingsFrame(ctk.CTkFrame):
         ctk.CTkButton(backup_btn_frame, text="저장", width=80, command=self._save_backup_path).pack(side="left")
         row += 1
 
+        # ── 폰트 크기 설정 ──
+        self._section_label(scroll, "폰트 크기", row)
+        row += 1
+
+        _SCALE_OPTIONS = {"작게": 0.85, "보통": 1.0, "크게": 1.25, "매우 크게": 1.5}
+        _SCALE_REVERSE = {v: k for k, v in _SCALE_OPTIONS.items()}
+        self._scale_options = _SCALE_OPTIONS
+
+        scale_row = ctk.CTkFrame(scroll, fg_color="transparent")
+        scale_row.grid(row=row, column=0, columnspan=2, sticky="w", padx=16, pady=(0, 4))
+
+        self._scale_seg = ctk.CTkSegmentedButton(
+            scale_row,
+            values=list(_SCALE_OPTIONS.keys()),
+            command=self._on_scale_change,
+        )
+        current_label = _SCALE_REVERSE.get(self._config.ui_scale, "크게")
+        self._scale_seg.set(current_label)
+        self._scale_seg.pack(side="left", padx=(0, 12))
+
+        self._scale_status = ctk.CTkLabel(
+            scale_row, text="", font=fm.font(11), text_color="gray"
+        )
+        self._scale_status.pack(side="left")
+        row += 1
+
+        row += 1  # 여백
+
         # ── 선수 데이터 동기화 ──
         self._section_label(scroll, "선수 데이터", row)
         row += 1
@@ -93,7 +122,7 @@ class SettingsFrame(ctk.CTkFrame):
 
         self._sync_status = ctk.CTkLabel(
             sync_btn_frame, text="선수 목록과 시즌 정보를 최신으로 업데이트합니다.",
-            font=ctk.CTkFont(size=11), text_color="gray"
+            font=fm.font(11), text_color="gray"
         )
         self._sync_status.pack(side="left")
         row += 1
@@ -143,7 +172,7 @@ class SettingsFrame(ctk.CTkFrame):
         row += 1
 
         self._update_status = ctk.CTkLabel(
-            scroll, text=f"현재 버전: v{__version__}", font=ctk.CTkFont(size=12), text_color="gray"
+            scroll, text=f"현재 버전: v{__version__}", font=fm.font(12), text_color="gray"
         )
         self._update_status.grid(row=row, column=0, columnspan=2, sticky="w", padx=16, pady=(0, 8))
 
@@ -153,8 +182,19 @@ class SettingsFrame(ctk.CTkFrame):
 
     def _section_label(self, parent, text: str, row: int):
         ctk.CTkLabel(
-            parent, text=text, font=ctk.CTkFont(size=14, weight="bold")
+            parent, text=text, font=fm.font(14, "bold")
         ).grid(row=row, column=0, columnspan=2, sticky="w", padx=12, pady=(16, 6))
+
+    # ──────────────────────────────────────────
+    # UI 크기
+    # ──────────────────────────────────────────
+
+    def _on_scale_change(self, label: str):
+        from src.ui import font_manager
+        scale = self._scale_options[label]
+        self._config.ui_scale = scale
+        font_manager.apply_scale(scale)
+        self._scale_status.configure(text="적용됨!")
 
     # ──────────────────────────────────────────
     # 선수 데이터 동기화

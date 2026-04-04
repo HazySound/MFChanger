@@ -8,6 +8,7 @@ import customtkinter as ctk
 from PIL import Image
 
 from src.ui.components.filter_panel import FilterDropdown
+from src.ui import font_manager as fm
 
 THUMB_SIZE = 48
 BADGE_SIZE = 30
@@ -71,7 +72,7 @@ class PlayerListItem(ctk.CTkFrame):
         text_frame.pack(side="left", fill="both", expand=True, pady=6)
 
         name_label = ctk.CTkLabel(
-            text_frame, text=name, font=ctk.CTkFont(size=13, weight="bold"), anchor="w"
+            text_frame, text=name, font=fm.font(13, "bold"), anchor="w"
         )
         name_label.pack(anchor="w")
 
@@ -195,7 +196,7 @@ class PlayerSearchPanel(ctk.CTkFrame):
             search_row,
             text="검색",
             width=52, height=36,
-            font=ctk.CTkFont(size=12),
+            font=fm.font(12),
             command=self._do_search,
         )
         self._search_btn.grid(row=0, column=1, padx=(0, 6))
@@ -204,7 +205,7 @@ class PlayerSearchPanel(ctk.CTkFrame):
             search_row,
             text="필터 ▼",
             width=72, height=36,
-            font=ctk.CTkFont(size=12),
+            font=fm.font(12),
             fg_color="transparent",
             border_width=1,
             border_color=("gray65", "gray45"),
@@ -215,7 +216,7 @@ class PlayerSearchPanel(ctk.CTkFrame):
         self._filter_btn.grid(row=0, column=2)
 
         self._status_label = ctk.CTkLabel(
-            self, text="데이터 로딩 중...", font=ctk.CTkFont(size=11), text_color="gray"
+            self, text="데이터 로딩 중...", font=fm.font(11), text_color="gray"
         )
         self._status_label.pack(pady=2)
 

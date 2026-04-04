@@ -2,6 +2,7 @@
 
 import subprocess
 import threading
+import webbrowser
 from pathlib import Path
 from tkinter import filedialog, messagebox
 from typing import Optional
@@ -12,6 +13,9 @@ from PIL import Image
 from src.core.config import Config
 from src.core import crest_changer
 from src.ui.components.image_preview import ImagePreview
+from src.ui import font_manager as fm
+
+TEAMCOLOR_URL = "https://fconline.nexon.com/datacenter/teamcolor"
 
 
 class CrestFrame(ctk.CTkFrame):
@@ -44,8 +48,8 @@ class CrestFrame(ctk.CTkFrame):
         frame.columnconfigure(0, weight=0)
         frame.columnconfigure(1, weight=1)
 
-        # 현재 크레스트 미리보기 (dark/large)
-        self._preview_current = ImagePreview(frame, size=160, label_text="현재 크레스트 (dark/large)")
+        # 현재 크레스트 미리보기
+        self._preview_current = ImagePreview(frame, size=160, label_text="현재 크레스트")
         self._preview_current.grid(row=0, column=0, padx=(20, 8), pady=10)
 
         # 우측 정보 영역
@@ -55,7 +59,7 @@ class CrestFrame(ctk.CTkFrame):
         ctk.CTkLabel(
             info_frame,
             text="크레스트 ID",
-            font=ctk.CTkFont(size=14, weight="bold"),
+            font=fm.font(14, "bold"),
         ).pack(anchor="w", pady=(16, 6))
 
         # ID 입력 행
@@ -76,14 +80,27 @@ class CrestFrame(ctk.CTkFrame):
             width=80,
             height=36,
             command=self._load_current_preview,
+        ).pack(side="left", padx=(0, 6))
+
+        ctk.CTkButton(
+            id_row,
+            text="ID 찾기",
+            width=72,
+            height=36,
+            fg_color="transparent",
+            border_width=1,
+            border_color=("gray65", "gray45"),
+            text_color=("gray20", "gray90"),
+            hover_color=("gray85", "gray30"),
+            command=lambda: webbrowser.open(TEAMCOLOR_URL),
         ).pack(side="left")
 
         self._id_info_label = ctk.CTkLabel(
             info_frame,
-            text="이미지를 선택하면 파일명에서 자동으로 ID를 인식합니다.",
-            font=ctk.CTkFont(size=11),
+            text="팀컬러 검색 → 이미지 우클릭 → 다른 이름으로 저장\n파일명을 그대로 Ctrl+C 후 여기에 Ctrl+V",
+            font=fm.font(11),
             text_color="gray",
-            wraplength=240,
+            wraplength=0,
             justify="left",
         )
         self._id_info_label.pack(anchor="w", pady=(8, 0))
@@ -91,7 +108,7 @@ class CrestFrame(ctk.CTkFrame):
         self._current_status_label = ctk.CTkLabel(
             info_frame,
             text="",
-            font=ctk.CTkFont(size=11),
+            font=fm.font(11),
             text_color="#FF9800",
         )
         self._current_status_label.pack(anchor="w", pady=(6, 0))
@@ -133,25 +150,17 @@ class CrestFrame(ctk.CTkFrame):
 
         self._image_info_label = ctk.CTkLabel(
             btn_frame,
-            text="JPG, PNG, BMP, WEBP 지원\n파일명이 숫자면 ID로 자동 인식됩니다.",
-            font=ctk.CTkFont(size=11),
+            text="JPG, PNG, BMP, WEBP 지원\n[id].png / d[id].png / l[id].png 파일은 ID 자동 인식\n예) 1234.png / d1234.png / l1234.png",
+            font=fm.font(11),
             text_color="gray",
             justify="left",
         )
         self._image_info_label.pack(anchor="w")
 
         self._image_warn_label = ctk.CTkLabel(
-            btn_frame, text="", font=ctk.CTkFont(size=11), text_color="#FF9800"
+            btn_frame, text="", font=fm.font(11), text_color="#FF9800"
         )
         self._image_warn_label.pack(anchor="w", pady=(4, 0))
-
-        ctk.CTkLabel(
-            btn_frame,
-            text="교체 시 dark/light × large/medium/small\n총 6개 파일이 자동으로 생성됩니다.",
-            font=ctk.CTkFont(size=11),
-            text_color="gray",
-            justify="left",
-        ).pack(anchor="w", pady=(12, 0))
 
     def _build_action_area(self):
         frame = ctk.CTkFrame(self, fg_color="transparent")
@@ -162,7 +171,7 @@ class CrestFrame(ctk.CTkFrame):
             frame,
             text="크레스트 교체 실행",
             height=48,
-            font=ctk.CTkFont(size=15, weight="bold"),
+            font=fm.font(15, "bold"),
             fg_color="#2196F3",
             hover_color="#1976D2",
             command=self._apply_change,
@@ -170,7 +179,7 @@ class CrestFrame(ctk.CTkFrame):
         )
         self._apply_btn.grid(row=0, column=0, padx=10, pady=8, sticky="ew")
 
-        self._result_label = ctk.CTkLabel(frame, text="", font=ctk.CTkFont(size=12))
+        self._result_label = ctk.CTkLabel(frame, text="", font=fm.font(12))
         self._result_label.grid(row=1, column=0, padx=10)
 
     # ──────────────────────────────────────────
@@ -193,14 +202,9 @@ class CrestFrame(ctk.CTkFrame):
         self._selected_image_path = path
         self._preview_new.set_from_path(path)
 
-        # 파일명에서 ID 자동 인식 (숫자만 / d숫자 / l숫자 형식 모두 지원)
+        # 파일명에서 ID 자동 인식 (숫자 / d숫자 / l숫자 형식 모두 지원)
         stem = path.stem
-        if stem.isdigit():
-            parsed_id = int(stem)
-        elif len(stem) > 1 and stem[0].lower() in ("d", "l") and stem[1:].isdigit():
-            parsed_id = int(stem[1:])
-        else:
-            parsed_id = None
+        parsed_id = _parse_crest_id(stem)
 
         if parsed_id is not None:
             self._id_entry.delete(0, "end")
@@ -223,17 +227,21 @@ class CrestFrame(ctk.CTkFrame):
         self._update_apply_btn()
 
     def _load_current_preview(self):
-        """ID 입력 기반으로 현재 dark/large 크레스트 미리보기 로드."""
+        """ID 입력 기반으로 현재 크레스트 미리보기 로드."""
         id_text = self._id_entry.get().strip()
-        # 숫자 / d숫자 / l숫자 세 가지 형식 모두 허용
-        if id_text.isdigit():
-            crest_id = int(id_text)
-        elif len(id_text) > 1 and id_text[0].lower() in ("d", "l") and id_text[1:].isdigit():
-            crest_id = int(id_text[1:])
-        else:
-            self._current_status_label.configure(text="숫자 ID를 입력해주세요. (예: 1234, d1234, l1234)")
+        parsed_id = _parse_crest_id(id_text)
+
+        if parsed_id is None:
+            self._current_status_label.configure(text="크레스트 ID를 입력해주세요.")
             return
-        self._crest_id = crest_id
+
+        self._crest_id = parsed_id
+
+        # 입력란을 숫자만 남도록 정리
+        current = self._id_entry.get().strip()
+        if current != str(parsed_id):
+            self._id_entry.delete(0, "end")
+            self._id_entry.insert(0, str(parsed_id))
 
         if not self._config.is_crest_path_valid():
             self._current_status_label.configure(text="크레스트 폴더를 찾을 수 없습니다.")
@@ -241,8 +249,8 @@ class CrestFrame(ctk.CTkFrame):
             return
 
         def _worker():
-            img = crest_changer.load_crest_image(self._config.crest_dir, crest_id)
-            self.after(0, lambda: self._on_current_loaded(img, crest_id))
+            img = crest_changer.load_crest_image(self._config.crest_dir, parsed_id)
+            self.after(0, lambda: self._on_current_loaded(img, parsed_id))
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -250,7 +258,7 @@ class CrestFrame(ctk.CTkFrame):
         self._preview_current.set_image(img)
         if img is None:
             self._current_status_label.configure(
-                text=f"dark/large/d{crest_id}.png 파일이 없습니다."
+                text=f"ID {crest_id}의 크레스트를 찾을 수 없습니다."
             )
         else:
             self._current_status_label.configure(text="")
@@ -314,7 +322,6 @@ class CrestFrame(ctk.CTkFrame):
         self._apply_btn.configure(state="normal", text="크레스트 교체 실행")
         self._result_label.configure(text="크레스트 교체 완료!", text_color="#4CAF50")
 
-        # 미리보기 갱신 (dark/large)
         def _reload():
             img = crest_changer.load_crest_image(self._config.crest_dir, crest_id)
             self.after(0, lambda: self._preview_current.set_image(img))
@@ -325,3 +332,22 @@ class CrestFrame(ctk.CTkFrame):
         self._apply_btn.configure(state="normal", text="크레스트 교체 실행")
         self._result_label.configure(text=f"오류: {msg}", text_color="#F44336")
         messagebox.showerror("교체 실패", msg)
+
+
+# ──────────────────────────────────────────
+# 헬퍼
+# ──────────────────────────────────────────
+
+def _parse_crest_id(text: str) -> Optional[int]:
+    """다양한 형식의 입력에서 크레스트 ID(int) 추출.
+    인식 가능: '1234', 'd1234', 'l1234', 'l1234.png', '1234.png' 등
+    """
+    s = text.strip()
+    # .png 확장자 제거
+    if s.lower().endswith(".png"):
+        s = s[:-4]
+    if s.isdigit():
+        return int(s)
+    if len(s) > 1 and s[0].lower() in ("d", "l") and s[1:].isdigit():
+        return int(s[1:])
+    return None

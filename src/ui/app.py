@@ -1,11 +1,13 @@
 """메인 앱 윈도우"""
 
 import threading
+import webbrowser
 from pathlib import Path
 
 import customtkinter as ctk
 
 from src.api import nexon_api
+from src.ui import font_manager as fm
 from src.core.config import Config
 from src.core import updater
 from src.ui.main_frame import MainFrame
@@ -25,10 +27,14 @@ class App(ctk.CTk):
         nexon_api.init("")
         nexon_api.set_assets_dir(self._config.assets_dir)
 
+        # 폰트 크기 설정 (위젯 크기는 고정, 폰트만 배율 적용)
+        from src.ui import font_manager
+        font_manager.init(self._config.ui_scale)
+
         # 윈도우 설정
         self.title(f"{APP_NAME} v{__version__}")
         self.geometry("960x680")
-        self.minsize(800, 580)
+        self.minsize(780, 560)
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("blue")
 
@@ -92,7 +98,7 @@ class App(ctk.CTk):
         self._banner_label = ctk.CTkLabel(
             self._update_banner,
             text="",
-            font=ctk.CTkFont(size=12),
+            font=fm.font(12),
             text_color="white",
         )
         self._banner_label.grid(row=0, column=0, sticky="w", padx=12, pady=(6, 2))
@@ -137,6 +143,21 @@ class App(ctk.CTk):
         # 탭 뷰
         self._tabs = ctk.CTkTabview(self, anchor="nw")
         self._tabs.grid(row=1, column=0, sticky="nsew", padx=0, pady=0)
+
+        # 사용법 버튼 — 탭 헤더 우측에 부유 배치
+        ctk.CTkButton(
+            self,
+            text="사용법",
+            width=68,
+            height=28,
+            font=fm.font(12),
+            fg_color="transparent",
+            border_width=1,
+            border_color=("gray65", "gray45"),
+            text_color=("gray20", "gray90"),
+            hover_color=("gray85", "gray30"),
+            command=lambda: webbrowser.open("https://github.com/HazySound/MFChanger"),
+        ).place(relx=1.0, rely=0.0, anchor="ne", x=-10, y=8)
 
         self._tabs.add("미페 변경")
         self._tabs.add("크레스트 변경")
@@ -244,7 +265,7 @@ class App(ctk.CTk):
         ctk.CTkLabel(
             self._overlay,
             text="업데이트 다운로드 중...",
-            font=ctk.CTkFont(size=20, weight="bold"),
+            font=fm.font(20, "bold"),
         ).place(relx=0.5, rely=0.42, anchor="center")
 
         self._overlay_progress = ctk.CTkProgressBar(
@@ -256,7 +277,7 @@ class App(ctk.CTk):
         self._overlay_pct_label = ctk.CTkLabel(
             self._overlay,
             text="0%",
-            font=ctk.CTkFont(size=13),
+            font=fm.font(13),
             text_color="gray",
         )
         self._overlay_pct_label.place(relx=0.5, rely=0.56, anchor="center")
@@ -264,7 +285,7 @@ class App(ctk.CTk):
         ctk.CTkLabel(
             self._overlay,
             text="완료 후 자동으로 재시작됩니다. 프로그램을 종료하지 마세요.",
-            font=ctk.CTkFont(size=12),
+            font=fm.font(12),
             text_color="gray",
         ).place(relx=0.5, rely=0.62, anchor="center")
 

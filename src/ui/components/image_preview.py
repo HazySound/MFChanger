@@ -5,6 +5,7 @@ from typing import Callable, Optional
 
 import customtkinter as ctk
 from PIL import Image
+from src.ui import font_manager as fm
 
 _NORMAL_COLOR = ("gray90", "gray20")
 _HOVER_COLOR  = ("#BBDEFB", "#1565C0")
@@ -24,7 +25,7 @@ class ImagePreview(ctk.CTkFrame):
         self._placeholder_text = "이미지 없음"
 
         self._label_top = ctk.CTkLabel(
-            self, text=label_text, font=ctk.CTkFont(size=12)
+            self, text=label_text, font=fm.font(12)
         )
         self._label_top.pack(pady=(8, 4))
 
@@ -38,7 +39,7 @@ class ImagePreview(ctk.CTkFrame):
             self._container,
             text=self._placeholder_text,
             text_color="gray",
-            font=ctk.CTkFont(size=11),
+            font=fm.font(11),
             justify="center",
         )
         self._placeholder.place(relx=0.5, rely=0.5, anchor="center")
