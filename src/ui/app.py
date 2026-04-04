@@ -48,7 +48,14 @@ class App(ctk.CTk):
     def _apply_icon(self):
         try:
             import ctypes
-            icon_path = Path(__file__).parent.parent.parent / "assets" / "icon" / "icon.ico"
+            import sys
+            if getattr(sys, "frozen", False):
+                # PyInstaller frozen: _MEIPASS 안에 번들된 경로
+                base = Path(sys._MEIPASS)
+            else:
+                # 개발 환경: 프로젝트 루트
+                base = Path(__file__).parent.parent.parent
+            icon_path = base / "assets" / "icon" / "icon.ico"
             if not icon_path.exists():
                 return
             path_str = str(icon_path)

@@ -1,5 +1,7 @@
 """GitHub Releases 기반 업데이트 확인 및 설치"""
 
+import ctypes
+import os
 import subprocess
 import sys
 import webbrowser
@@ -93,22 +95,55 @@ def download_update(
     if progress_cb:
         progress_cb(1.0)
 
+    # Zone.Identifier ADS 제거 — 인터넷 다운로드 표시를 지워
+    # Windows Defender/SmartScreen이 추출된 DLL을 격리하는 것을 방지
+    try:
+        ctypes.windll.kernel32.DeleteFileW(str(tmp_path) + ":Zone.Identifier")
+    except Exception:
+        pass
+
     return tmp_path
 
 
 def apply_update(new_exe_path: Path):
     """
     배치 스크립트로 현재 exe를 새 exe로 교체 후 재실행.
+    구 프로세스 PID가 완전히 사라진 뒤에 새 exe를 실행해
+    PyInstaller 임시 폴더(_MEI*) 삭제 전 재실행으로 인한 DLL 오류를 방지.
     이 함수가 반환되지 않음 (sys.exit 호출).
     """
     current_exe = Path(sys.executable)
     bat_path = new_exe_path.parent / "_update.bat"
+    pid = os.getpid()
+    mei_path = getattr(sys, "_MEIPASS", None)  # PyInstaller 임시 추출 경로
 
+    # 1단계: PID 소멸 대기
     bat = (
         "@echo off\r\n"
-        "timeout /t 2 /nobreak >nul\r\n"
+        ":pidloop\r\n"
+        f'tasklist /FI "PID eq {pid}" 2>NUL | find /I "{pid}" >NUL\r\n'
+        "if not errorlevel 1 (\r\n"
+        "    timeout /t 1 /nobreak >nul\r\n"
+        "    goto pidloop\r\n"
+        ")\r\n"
+    )
+
+    # 2단계: _MEI 임시 폴더 삭제 완료 대기 (atexit cleanup 종료 보장)
+    if mei_path:
+        bat += (
+            ":meiloop\r\n"
+            f'if exist "{mei_path}" (\r\n'
+            "    timeout /t 1 /nobreak >nul\r\n"
+            "    goto meiloop\r\n"
+            ")\r\n"
+        )
+
+    # 3단계: 파일 교체 및 재실행
+    # explorer.exe 경유 실행 — ShellExecute로 완전히 새 환경에서 시작되므로
+    # start "" 방식의 DLL 탐색 경로 상속 문제가 없음
+    bat += (
         f'move /y "{new_exe_path}" "{current_exe}"\r\n'
-        f'start "" "{current_exe}"\r\n'
+        f'explorer.exe "{current_exe}"\r\n'
         'del "%~f0"\r\n'
     )
     bat_path.write_bytes(bat.encode("mbcs", errors="replace"))
