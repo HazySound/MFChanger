@@ -41,9 +41,10 @@ def _open_folder(path: Path):
 
 
 class HistoryFrame(ctk.CTkFrame):
-    def __init__(self, master, config: Config, **kwargs):
+    def __init__(self, master, config: Config, on_face_restored=None, **kwargs):
         super().__init__(master, fg_color="transparent", **kwargs)
         self._config = config
+        self._on_face_restored = on_face_restored  # Callable[[int], None]
         self._build()
         self.refresh()
 
@@ -297,6 +298,8 @@ class HistoryFrame(ctk.CTkFrame):
         try:
             face_changer.restore_face(record, self._config)
             history.remove_record(record.spid)
+            if self._on_face_restored:
+                self._on_face_restored(record.spid)
             self.refresh()
         except Exception as e:
             messagebox.showerror("복원 실패", str(e))
@@ -323,12 +326,17 @@ class HistoryFrame(ctk.CTkFrame):
         ):
             return
         errors = []
+        restored_spids = []
         for record in records:
             try:
                 face_changer.restore_face(record, self._config)
                 history.remove_record(record.spid)
+                restored_spids.append(record.spid)
             except Exception as e:
                 errors.append(f"p{record.spid}: {e}")
+        if self._on_face_restored:
+            for spid in restored_spids:
+                self._on_face_restored(spid)
         self.refresh()
         if errors:
             messagebox.showerror("일부 복원 실패", "\n".join(errors))

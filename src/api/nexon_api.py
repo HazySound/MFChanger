@@ -476,6 +476,12 @@ def clear_image_cache():
         _image_cache.clear()
 
 
+def invalidate_player_cache(spid: int):
+    """특정 선수의 캐시 항목만 삭제 — 미페 교체 후 썸네일 갱신에 사용."""
+    with _image_cache_lock:
+        _image_cache.pop(spid, None)
+
+
 def init(api_key: str):
     """앱 시작 시 API 키 설정."""
     _set_api_key(api_key)

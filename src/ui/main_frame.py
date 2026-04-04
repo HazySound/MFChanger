@@ -114,6 +114,20 @@ class MainFrame(ctk.CTkFrame):
         )
         self._open_folder_btn.pack(anchor="w", pady=(14, 0))
 
+        # 공식 미페로 복원 버튼
+        self._restore_official_btn = ctk.CTkButton(
+            info_frame,
+            text="공식 미페로 복원",
+            width=120,
+            height=32,
+            fg_color=("gray75", "gray30"),
+            hover_color=("gray65", "gray40"),
+            text_color=("gray10", "gray90"),
+            command=self._restore_to_official,
+            state="disabled",
+        )
+        self._restore_official_btn.pack(anchor="w", pady=(6, 0))
+
     def _build_image_select_area(self, parent):
         frame = ctk.CTkFrame(parent)
         frame.grid(row=1, column=0, sticky="nsew", pady=(4, 4))
@@ -246,6 +260,7 @@ class MainFrame(ctk.CTkFrame):
             self._player_status_label.configure(text="")
 
         self._open_folder_btn.configure(state="normal")
+        self._restore_official_btn.configure(state="normal")
         self._update_apply_btn()
         self._preview_current.clear()
         self._load_player_image(spid)
@@ -340,6 +355,13 @@ class MainFrame(ctk.CTkFrame):
                 self._image_warn_label.configure(text="")
         self._update_apply_btn()
 
+        # 파일명이 p{spid}.png 형식이면 PID로 자동 검색
+        stem = path.stem  # e.g. "p1231234"
+        if stem.startswith("p") and stem[1:].isdigit() and len(stem) > 4:
+            spid = int(stem[1:])
+            pid_str = str(spid)[3:]
+            self._search_panel.search_by_pid(pid_str, auto_select_spid=spid)
+
     def _paste_image(self, _event=None):
         try:
             from PIL import ImageGrab
@@ -401,8 +423,62 @@ class MainFrame(ctk.CTkFrame):
             record = history.find_record(spid)
             if record:
                 self._player_status_label.configure(text=f"변경됨: {record.changed_at}")
+            self.refresh_thumb(spid)
 
     def _on_change_error(self, msg: str):
         self._apply_btn.configure(state="normal", text="미페 교체 실행")
         self._result_label.configure(text=f"오류: {msg}", text_color="#F44336")
         messagebox.showerror("교체 실패", msg)
+
+    def _restore_to_official(self):
+        if not self._selected_player:
+            return
+
+        spid = self._selected_player.get("id", 0)
+        name = self._selected_player.get("name", "")
+
+        if not messagebox.askyesno(
+            "공식 미페로 복원",
+            f"'{name}'의 미페를 공식 이미지로 복원하겠습니까?\n"
+            "CDN에서 공식 미페를 다운로드해 덮어씁니다.",
+        ):
+            return
+
+        if not self._config.is_fc_path_valid():
+            messagebox.showerror(
+                "경로 오류",
+                f"FC온라인 미페 폴더를 찾을 수 없습니다.\n"
+                f"설정에서 설치 경로를 확인해주세요.\n\n현재 경로: {self._config.face_dir}",
+            )
+            return
+
+        self._restore_official_btn.configure(state="disabled", text="다운로드 중...")
+        self._result_label.configure(text="")
+
+        def _worker():
+            try:
+                record = face_changer.restore_to_official(spid, name, self._config)
+                history.add_record(record)
+                self.after(0, lambda: self._on_restore_official_success(spid))
+            except Exception as e:
+                msg = str(e)
+                self.after(0, lambda m=msg: self._on_restore_official_error(m))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _on_restore_official_success(self, spid: int):
+        self._restore_official_btn.configure(state="normal", text="공식 미페로 복원")
+        self._result_label.configure(text="공식 미페로 복원 완료!", text_color="#4CAF50")
+        self.refresh_thumb(spid)
+        if self._preview_mode == "현재 미페":
+            self._load_player_image(spid)
+
+    def refresh_thumb(self, spid: int):
+        """미페 변경 후 검색 목록 썸네일 갱신 (캐시 무효화 + 재로드)."""
+        nexon_api.invalidate_player_cache(spid)
+        self._search_panel.reload_thumb(spid)
+
+    def _on_restore_official_error(self, msg: str):
+        self._restore_official_btn.configure(state="normal", text="공식 미페로 복원")
+        self._result_label.configure(text=f"오류: {msg}", text_color="#F44336")
+        messagebox.showerror("복원 실패", msg)

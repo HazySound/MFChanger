@@ -175,7 +175,9 @@ class App(ctk.CTk):
         self._crest_frame.pack(fill="both", expand=True)
 
         self._history_frame = HistoryFrame(
-            self._tabs.tab("변경 이력"), config=self._config
+            self._tabs.tab("변경 이력"),
+            config=self._config,
+            on_face_restored=self._on_face_restored,
         )
         self._history_frame.pack(fill="both", expand=True)
 
@@ -197,6 +199,10 @@ class App(ctk.CTk):
     def _on_meta_synced(self):
         """동기화 완료 → 미페 변경 탭 검색 결과 즉시 갱신."""
         self._main_frame.reload_meta()
+
+    def _on_face_restored(self, spid: int):
+        """이력에서 미페 복원 → 검색 목록 썸네일 갱신."""
+        self._main_frame.refresh_thumb(spid)
 
     # ──────────────────────────────────────────
     # 업데이트 배너

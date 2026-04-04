@@ -369,6 +369,56 @@ class PlayerSearchPanel(ctk.CTkFrame):
     # 외부 데이터 설정
     # ──────────────────────────────────────────
 
+    def search_by_pid(self, pid_str: str, auto_select_spid: int = 0):
+        """PID 기반 검색. pid_str = str(spid)[3:] 형식의 문자열."""
+        results = [
+            p for p in self._spid_list
+            if str(p.get("id", 0))[3:] == pid_str
+        ]
+        self._search_var.set("")
+        self._render_results(results[:100])
+        if results:
+            self._status_label.configure(text=f"PID {pid_str} — {len(results)}명 검색됨")
+
+        if auto_select_spid:
+            # 레이아웃 강제 완료 후 스크롤·선택을 한 번에 처리 → 목록이 이미 맞는 위치에서 보임
+            self._scroll.update_idletasks()
+            self._auto_select(auto_select_spid)
+
+    def _auto_select(self, spid: int):
+        """렌더링된 목록에서 해당 SPID 항목을 자동 선택 후 스크롤."""
+        for item in self._items:
+            if item._player.get("id") == spid:
+                item.set_selected(True)
+                self._scroll_to_item(item)
+                self._on_select(item._player)
+                break
+
+    def _scroll_to_item(self, item):
+        """항목이 스크롤 영역 중앙에 오도록 스크롤."""
+        try:
+            canvas = self._scroll._parent_canvas
+            bbox = canvas.bbox("all")
+            if not bbox:
+                return
+            total_h = bbox[3]
+            visible_h = canvas.winfo_height()
+            if total_h <= visible_h:
+                return
+            item_y = item.winfo_y()
+            item_h = item.winfo_height()
+            fraction = max(0.0, min(1.0, (item_y + item_h / 2 - visible_h / 2) / total_h))
+            canvas.yview_moveto(fraction)
+        except Exception:
+            pass
+
+    def reload_thumb(self, spid: int):
+        """특정 SPID 항목의 썸네일만 다시 로드."""
+        for item in self._items:
+            if item._player.get("id") == spid:
+                item.start_loading()
+                break
+
     def set_spid_list(self, spid_list: list[dict]):
         self._spid_list = spid_list
         count = len(spid_list)

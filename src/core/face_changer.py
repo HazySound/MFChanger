@@ -113,6 +113,54 @@ def replace_face(
     )
 
 
+def restore_to_official(spid: int, player_name: str, config: Config) -> ChangeRecord:
+    """
+    공식 미페(CDN)를 다운로드해 로컬 파일로 덮어씀.
+    기존 파일은 백업 설정에 따라 백업 후 교체.
+    """
+    import io
+    from src.api import nexon_api
+
+    face_dir = config.face_dir
+    if not face_dir.exists():
+        raise FileNotFoundError(
+            f"FC온라인 미페 폴더를 찾을 수 없습니다.\n경로: {face_dir}\n\n"
+            "설정에서 FC온라인 설치 경로를 확인해주세요."
+        )
+
+    img = nexon_api.get_official_player_image(spid)
+    if img is None:
+        raise ValueError("공식 미페를 가져올 수 없습니다. 인터넷 연결을 확인해주세요.")
+
+    dest_file = face_dir / f"p{spid}.png"
+    backup_path: Optional[str] = None
+
+    if config.backup_enabled and dest_file.exists():
+        backup_dir = config.backup_path / f"p{spid}"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_file = backup_dir / f"p{spid}_backup_{timestamp}.png"
+        _remove_readonly(dest_file)
+        shutil.copy2(dest_file, backup_file)
+        backup_path = str(backup_file)
+
+    if dest_file.exists():
+        _remove_readonly(dest_file)
+
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    dest_file.write_bytes(buf.getvalue())
+    _set_readonly(dest_file)
+
+    return ChangeRecord(
+        spid=spid,
+        player_name=player_name,
+        image_path="(공식 미페)",
+        changed_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        backup_path=backup_path,
+    )
+
+
 def restore_face(record: ChangeRecord, config: Config) -> bool:
     """
     백업 파일로 복원.
