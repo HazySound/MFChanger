@@ -23,7 +23,7 @@ class MainFrame(ctk.CTkFrame):
         self._selected_player: Optional[dict] = None
         self._selected_image_path: Optional[Path] = None
         self._loading_image = False
-        self._preview_mode = "공식 미페"   # "공식 미페" | "현재 미페"
+        self._preview_mode = "현재 미페"   # "현재 미페" | "공식 미페"
 
         self._build()
         self._load_meta_data()
@@ -64,12 +64,12 @@ class MainFrame(ctk.CTkFrame):
         # 토글 버튼 (공식 / 현재)
         self._preview_toggle = ctk.CTkSegmentedButton(
             preview_wrap,
-            values=["공식 미페", "현재 미페"],
+            values=["현재 미페", "공식 미페"],
             command=self._on_preview_toggle,
             font=ctk.CTkFont(size=11),
             height=26,
         )
-        self._preview_toggle.set("공식 미페")
+        self._preview_toggle.set("현재 미페")
         self._preview_toggle.pack(pady=(0, 4))
 
         self._preview_current = ImagePreview(preview_wrap, size=160, label_text="")
@@ -271,9 +271,9 @@ class MainFrame(ctk.CTkFrame):
                 self._preview_current.set_label("로컬 파일 없음")
             self._loading_image = False
         else:
-            # CDN에서 로드
+            # 공식 미페: CDN 전용 (로컬에서 바꾼 것과 무관하게 원본 표시)
             def _worker():
-                img = nexon_api.get_player_image(spid)
+                img = nexon_api.get_official_player_image(spid)
                 self.after(0, lambda: self._on_image_loaded(img))
             threading.Thread(target=_worker, daemon=True).start()
 

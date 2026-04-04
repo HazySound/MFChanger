@@ -46,9 +46,21 @@ _image_source_cache: dict[int, str] = {}
 _not_found_image: Optional[Image.Image] = None
 _not_found_lock = threading.Lock()
 
+# 공식 미페 CDN 캐시 (spid -> PIL.Image) — 로컬 캐시와 분리
+_official_image_cache: dict[int, Image.Image] = {}
+
+# 로컬 assets 디렉터리 (_cache/live/externalAssets/common)
+_assets_dir: Optional[Path] = None
+
 
 def _set_api_key(api_key: str):
     pass  # CF Worker가 API 키를 처리하므로 클라이언트에서 불필요
+
+
+def set_assets_dir(path: Path):
+    """앱 초기화 시 로컬 assets 디렉터리 경로 주입."""
+    global _assets_dir
+    _assets_dir = path
 
 
 # ──────────────────────────────────────────
@@ -288,18 +300,51 @@ def _fetch_image_from_url(url: str) -> Optional[Image.Image]:
     return None
 
 
+def _fetch_image_from_local(relative: str) -> Optional[Image.Image]:
+    """로컬 assets 디렉터리에서 이미지 로드. assets_dir 미설정 또는 파일 없으면 None."""
+    if _assets_dir is None:
+        return None
+    try:
+        path = _assets_dir / relative
+        if path.exists():
+            return Image.open(path).convert("RGBA")
+    except Exception:
+        pass
+    return None
+
+
 def get_player_image(spid: int) -> Optional[Image.Image]:
     """선수 이미지 반환.
-    1차: 4개 CDN 경로를 spid 기준으로 시도
-    2차: pid 기준(players / playersHigh)으로 폴백
-    3차: players/not_found.png 폴백
+    1차: 로컬 assets에서 4개 경로 spid 기준 탐색
+    2차: 로컬 assets에서 pid 기준 탐색
+    3차: CDN 4개 경로 spid 기준 (로컬 없을 때 폴백)
+    4차: CDN pid 기준
+    5차: players/not_found.png
     결과는 메모리 캐시에 저장.
     """
     with _image_cache_lock:
         if spid in _image_cache:
             return _image_cache[spid]
 
-    # 1차 시도 — spid 기준
+    # 1차 — 로컬 spid 기준
+    for cdn_path in _CDN_IMAGE_PATHS:
+        relative = f"{cdn_path}/p{spid}.png"
+        img = _fetch_image_from_local(relative)
+        if img is not None:
+            _cache_image(spid, img, source=relative)
+            return img
+
+    # 2차 — 로컬 pid 기준
+    pid = _spid_to_pid(spid)
+    if pid != spid:
+        for cdn_path in ("players", "playersHigh"):
+            relative = f"{cdn_path}/p{pid}.png"
+            img = _fetch_image_from_local(relative)
+            if img is not None:
+                _cache_image(spid, img, source=relative)
+                return img
+
+    # 3차 — CDN spid 기준 (로컬 폴백)
     for cdn_path in _CDN_IMAGE_PATHS:
         img = _fetch_image_from_url(
             f"{CDN_BASE}/live/externalAssets/common/{cdn_path}/p{spid}.png"
@@ -308,8 +353,7 @@ def get_player_image(spid: int) -> Optional[Image.Image]:
             _cache_image(spid, img, source=f"{cdn_path}/p{spid}.png")
             return img
 
-    # 2차 시도 — pid 기준 (spid 뒤 6자리, 앞 0 제거)
-    pid = _spid_to_pid(spid)
+    # 4차 — CDN pid 기준
     if pid != spid:
         for cdn_path in ("players", "playersHigh"):
             img = _fetch_image_from_url(
@@ -319,13 +363,52 @@ def get_player_image(spid: int) -> Optional[Image.Image]:
                 _cache_image(spid, img, source=f"{cdn_path}/p{pid}.png")
                 return img
 
-    # 3차 시도 — not_found.png 폴백
+    # 5차 — not_found.png 폴백
     not_found = _get_not_found_image()
     if not_found is not None:
         _cache_image(spid, not_found, source="players/not_found.png")
         return not_found
 
     return None
+
+
+def get_official_player_image(spid: int) -> Optional[Image.Image]:
+    """공식 미페 프리뷰용 — CDN 전용 (로컬 파일 무시).
+    로컬에서 바꾼 미페와 무관하게 서버 원본 이미지를 반환.
+    별도 캐시(_official_image_cache) 사용.
+    """
+    with _image_cache_lock:
+        if spid in _official_image_cache:
+            return _official_image_cache[spid]
+
+    # CDN spid 기준
+    for cdn_path in _CDN_IMAGE_PATHS:
+        img = _fetch_image_from_url(
+            f"{CDN_BASE}/live/externalAssets/common/{cdn_path}/p{spid}.png"
+        )
+        if img is not None:
+            with _image_cache_lock:
+                _official_image_cache[spid] = img
+            return img
+
+    # CDN pid 기준
+    pid = _spid_to_pid(spid)
+    if pid != spid:
+        for cdn_path in ("players", "playersHigh"):
+            img = _fetch_image_from_url(
+                f"{CDN_BASE}/live/externalAssets/common/{cdn_path}/p{pid}.png"
+            )
+            if img is not None:
+                with _image_cache_lock:
+                    _official_image_cache[spid] = img
+                return img
+
+    # not_found 폴백
+    not_found = _get_not_found_image()
+    if not_found is not None:
+        with _image_cache_lock:
+            _official_image_cache[spid] = not_found
+    return not_found
 
 
 def _get_not_found_image() -> Optional[Image.Image]:
@@ -362,7 +445,21 @@ def _cache_image(spid: int, img: Optional[Image.Image], source: str = ""):
 
 
 def download_original_image(spid: int) -> Optional[bytes]:
-    """원본 해상도 이미지 bytes 반환. 4개 CDN 경로를 순서대로 시도."""
+    """원본 해상도 이미지 bytes 반환. 로컬 우선, 없으면 CDN."""
+    # 로컬 우선
+    if _assets_dir is not None:
+        pid = _spid_to_pid(spid)
+        for cdn_path in _CDN_IMAGE_PATHS:
+            path = _assets_dir / f"{cdn_path}/p{spid}.png"
+            if path.exists():
+                return path.read_bytes()
+        if pid != spid:
+            for cdn_path in ("players", "playersHigh"):
+                path = _assets_dir / f"{cdn_path}/p{pid}.png"
+                if path.exists():
+                    return path.read_bytes()
+
+    # CDN 폴백
     for cdn_path in _CDN_IMAGE_PATHS:
         url = f"{CDN_BASE}/live/externalAssets/common/{cdn_path}/p{spid}.png"
         try:

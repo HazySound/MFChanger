@@ -23,6 +23,7 @@ class App(ctk.CTk):
 
         # API 초기화 (CF Worker 프록시 사용 — 클라이언트 키 불필요)
         nexon_api.init("")
+        nexon_api.set_assets_dir(self._config.assets_dir)
 
         # 윈도우 설정
         self.title(f"{APP_NAME} v{__version__}")
