@@ -193,12 +193,19 @@ class CrestFrame(ctk.CTkFrame):
         self._selected_image_path = path
         self._preview_new.set_from_path(path)
 
-        # 파일명에서 ID 자동 인식
+        # 파일명에서 ID 자동 인식 (숫자만 / d숫자 / l숫자 형식 모두 지원)
         stem = path.stem
         if stem.isdigit():
+            parsed_id = int(stem)
+        elif len(stem) > 1 and stem[0].lower() in ("d", "l") and stem[1:].isdigit():
+            parsed_id = int(stem[1:])
+        else:
+            parsed_id = None
+
+        if parsed_id is not None:
             self._id_entry.delete(0, "end")
-            self._id_entry.insert(0, stem)
-            self._crest_id = int(stem)
+            self._id_entry.insert(0, str(parsed_id))
+            self._crest_id = parsed_id
             self._load_current_preview()
 
         # 이미지 크기 표시
@@ -218,11 +225,14 @@ class CrestFrame(ctk.CTkFrame):
     def _load_current_preview(self):
         """ID 입력 기반으로 현재 dark/large 크레스트 미리보기 로드."""
         id_text = self._id_entry.get().strip()
-        if not id_text.isdigit():
-            self._current_status_label.configure(text="숫자 ID를 입력해주세요.")
+        # 숫자 / d숫자 / l숫자 세 가지 형식 모두 허용
+        if id_text.isdigit():
+            crest_id = int(id_text)
+        elif len(id_text) > 1 and id_text[0].lower() in ("d", "l") and id_text[1:].isdigit():
+            crest_id = int(id_text[1:])
+        else:
+            self._current_status_label.configure(text="숫자 ID를 입력해주세요. (예: 1234, d1234, l1234)")
             return
-
-        crest_id = int(id_text)
         self._crest_id = crest_id
 
         if not self._config.is_crest_path_valid():
