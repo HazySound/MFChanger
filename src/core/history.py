@@ -6,9 +6,11 @@ from typing import Optional
 
 from .face_changer import ChangeRecord
 from .crest_changer import CrestChangeRecord
+from .manager_changer import ManagerChangeRecord
 
 HISTORY_PATH = Path.cwd() / "history.json"
 CREST_HISTORY_PATH = Path.cwd() / "crest_history.json"
+MANAGER_HISTORY_PATH = Path.cwd() / "manager_history.json"
 
 
 def load_history() -> list[ChangeRecord]:
@@ -129,3 +131,53 @@ def find_crest_record(crest_id: int) -> Optional[CrestChangeRecord]:
         if r.crest_id == crest_id:
             return r
     return None
+
+
+# ──────────────────────────────────────────
+# 감독 이력
+# ──────────────────────────────────────────
+
+def load_manager_history() -> list[ManagerChangeRecord]:
+    if not MANAGER_HISTORY_PATH.exists():
+        return []
+    try:
+        with open(MANAGER_HISTORY_PATH, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+        return [ManagerChangeRecord(**item) for item in raw]
+    except Exception:
+        return []
+
+
+def save_manager_history(records: list[ManagerChangeRecord]):
+    data = [
+        {
+            "manager_id": r.manager_id,
+            "manager_name": r.manager_name,
+            "team": r.team,
+            "image_path": r.image_path,
+            "changed_at": r.changed_at,
+        }
+        for r in records
+    ]
+    with open(MANAGER_HISTORY_PATH, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def add_manager_record(record: ManagerChangeRecord):
+    records = load_manager_history()
+    records = [r for r in records if r.manager_id != record.manager_id]
+    records.insert(0, record)
+    save_manager_history(records)
+
+
+def find_manager_record(manager_id: str) -> Optional[ManagerChangeRecord]:
+    for r in load_manager_history():
+        if r.manager_id == manager_id:
+            return r
+    return None
+
+
+def remove_manager_record(manager_id: str):
+    records = load_manager_history()
+    records = [r for r in records if r.manager_id != manager_id]
+    save_manager_history(records)

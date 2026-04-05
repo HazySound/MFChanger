@@ -70,6 +70,10 @@ class Config:
         return Path(self.fc_online_path) / CREST_SUBPATH
 
     @property
+    def manager_dir(self) -> Path:
+        return Path(self.fc_online_path) / r"_cache\live\externalAssets\common\managers"
+
+    @property
     def backup_enabled(self) -> bool:
         return self._data["backup_enabled"]
 

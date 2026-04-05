@@ -9,9 +9,10 @@ import customtkinter as ctk
 from src.api import nexon_api
 from src.ui import font_manager as fm
 from src.core.config import Config
-from src.core import updater
+from src.core import updater, db_init
 from src.ui.main_frame import MainFrame
 from src.ui.crest_frame import CrestFrame
+from src.ui.manager_frame import ManagerFrame
 from src.ui.settings_frame import SettingsFrame
 from src.ui.history_frame import HistoryFrame
 from version import APP_NAME, __version__
@@ -47,9 +48,13 @@ class App(ctk.CTk):
 
         self._build()
 
-        # 시작 시 업데이트 확인
+        # 업데이트 확인 → 완료 후 DB 파일 체크 → 없으면 생성
+        # (업데이트가 항상 우선: DB 로직이 바뀐 버전으로 먼저 업데이트 후 DB 빌드)
+        self._pending_db_missing = db_init.check_missing()
         if self._config.check_update_on_start:
             threading.Thread(target=self._startup_update_check, daemon=True).start()
+        elif self._pending_db_missing:
+            self.after(0, lambda: self._start_db_init(self._pending_db_missing))
 
     def _apply_icon(self):
         try:
@@ -161,6 +166,7 @@ class App(ctk.CTk):
 
         self._tabs.add("미페 변경")
         self._tabs.add("크레스트 변경")
+        self._tabs.add("감독 변경")
         self._tabs.add("변경 이력")
         self._tabs.add("설정")
 
@@ -174,10 +180,16 @@ class App(ctk.CTk):
         )
         self._crest_frame.pack(fill="both", expand=True)
 
+        self._manager_frame = ManagerFrame(
+            self._tabs.tab("감독 변경"), config=self._config
+        )
+        self._manager_frame.pack(fill="both", expand=True)
+
         self._history_frame = HistoryFrame(
             self._tabs.tab("변경 이력"),
             config=self._config,
             on_face_restored=self._on_face_restored,
+            on_manager_restored=self._manager_frame.refresh_manager,
         )
         self._history_frame.pack(fill="both", expand=True)
 
@@ -212,6 +224,9 @@ class App(ctk.CTk):
         result = updater.check_for_update(timeout=5)
         if result:
             self.after(0, lambda: self._show_banner(result))
+        # 업데이트 확인 완료 후 누락 DB 생성
+        if self._pending_db_missing:
+            self.after(0, lambda: self._start_db_init(self._pending_db_missing))
 
     def _show_banner(self, result: dict):
         self._update_result = result
@@ -315,6 +330,67 @@ class App(ctk.CTk):
 
         # 설정 프레임 상태도 복구
         self._settings_frame.on_download_error(msg)
+
+    # ──────────────────────────────────────────
+    # DB 초기화 오버레이
+    # ──────────────────────────────────────────
+
+    def _start_db_init(self, missing: list[str]):
+        """DB 파일 생성 오버레이 표시 후 백그라운드 작업 시작."""
+        self._show_db_overlay(len(missing))
+        threading.Thread(
+            target=db_init.build_missing,
+            args=(missing, lambda key, label, frac: self.after(0, lambda k=key, l=label, f=frac: self._on_db_step(k, l, f))),
+            daemon=True,
+        ).start()
+
+    def _show_db_overlay(self, total_steps: int):
+        self._db_overlay = ctk.CTkFrame(self, corner_radius=0)
+        self._db_overlay.place(x=0, y=0, relwidth=1, relheight=1)
+        self._db_overlay.lift()
+        self._db_overlay.focus_set()
+
+        ctk.CTkLabel(
+            self._db_overlay,
+            text="DB 생성 중...",
+            font=fm.font(20, "bold"),
+        ).place(relx=0.5, rely=0.38, anchor="center")
+
+        self._db_step_label = ctk.CTkLabel(
+            self._db_overlay,
+            text="준비 중",
+            font=fm.font(13),
+            text_color="gray",
+        )
+        self._db_step_label.place(relx=0.5, rely=0.45, anchor="center")
+
+        self._db_progress = ctk.CTkProgressBar(self._db_overlay, width=420, height=12)
+        self._db_progress.set(0)
+        self._db_progress.place(relx=0.5, rely=0.52, anchor="center")
+
+        self._db_pct_label = ctk.CTkLabel(
+            self._db_overlay,
+            text="0%",
+            font=fm.font(13),
+            text_color="gray",
+        )
+        self._db_pct_label.place(relx=0.5, rely=0.58, anchor="center")
+
+        ctk.CTkLabel(
+            self._db_overlay,
+            text=f"총 {total_steps}개 파일을 생성합니다. 잠시만 기다려주세요.",
+            font=fm.font(12),
+            text_color="gray",
+        ).place(relx=0.5, rely=0.64, anchor="center")
+
+    def _on_db_step(self, key: str, label: str, fraction: float):
+        if key == "done":
+            self._db_overlay.place_forget()
+            del self._db_overlay
+            return
+        self._db_step_label.configure(text=f"생성 중: {label}")
+        self._db_progress.set(fraction)
+        self._db_pct_label.configure(text=f"{int(fraction * 100)}%")
 
     def run(self):
         self.mainloop()

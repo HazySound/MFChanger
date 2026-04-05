@@ -9,10 +9,11 @@ from typing import Callable, Optional
 import customtkinter as ctk
 from PIL import Image
 
-from src.core import history, face_changer, crest_changer
+from src.core import history, face_changer, crest_changer, manager_changer
 from src.core.config import Config
 from src.core.face_changer import ChangeRecord
 from src.core.crest_changer import CrestChangeRecord
+from src.core.manager_changer import ManagerChangeRecord
 from src.ui import font_manager as fm
 
 _THUMB = 52
@@ -346,10 +347,11 @@ class FaceHistoryGroup(ctk.CTkFrame):
 # ══════════════════════════════════════════════════════
 
 class HistoryFrame(ctk.CTkFrame):
-    def __init__(self, master, config: Config, on_face_restored=None, **kwargs):
+    def __init__(self, master, config: Config, on_face_restored=None, on_manager_restored=None, **kwargs):
         super().__init__(master, fg_color="transparent", **kwargs)
         self._config = config
         self._on_face_restored = on_face_restored
+        self._on_manager_restored = on_manager_restored
         self._build()
         self.refresh()
 
@@ -369,8 +371,9 @@ class HistoryFrame(ctk.CTkFrame):
 
         face_records = history.load_history()
         crest_records = history.load_crest_history()
+        manager_records = history.load_manager_history()
 
-        if not face_records and not crest_records:
+        if not face_records and not crest_records and not manager_records:
             ctk.CTkLabel(
                 self._scroll, text="변경 이력이 없습니다.", text_color="gray"
             ).pack(pady=20)
@@ -394,6 +397,17 @@ class HistoryFrame(ctk.CTkFrame):
         else:
             ctk.CTkLabel(
                 self._scroll, text="크레스트 변경 이력이 없습니다.",
+                text_color="gray", font=fm.font(11),
+            ).pack(anchor="w", padx=16, pady=(0, 4))
+
+        # ── 감독 이력 ──
+        self._add_section_title("감독 변경 이력")
+        if manager_records:
+            for record in manager_records:
+                self._add_manager_row(record)
+        else:
+            ctk.CTkLabel(
+                self._scroll, text="감독 변경 이력이 없습니다.",
                 text_color="gray", font=fm.font(11),
             ).pack(anchor="w", padx=16, pady=(0, 4))
 
@@ -530,3 +544,91 @@ class HistoryFrame(ctk.CTkFrame):
             self.refresh()
         except Exception as e:
             messagebox.showerror("복원 실패", str(e))
+
+    # ── 감독 이력 ──────────────────────────────
+
+    def _add_manager_row(self, record: ManagerChangeRecord):
+        row = ctk.CTkFrame(self._scroll, corner_radius=8)
+        row.pack(fill="x", pady=3)
+        row.columnconfigure(2, weight=1)
+
+        # 현재 얼굴 썸네일
+        thumb_label = self._make_thumb_label(row)
+        thumb_label.grid(row=0, column=0, padx=(12, 8), pady=10)
+
+        # 감독 정보
+        info = ctk.CTkFrame(row, fg_color="transparent")
+        info.grid(row=0, column=2, sticky="ew", padx=4, pady=10)
+        ctk.CTkLabel(
+            info, text=f"{record.manager_name}",
+            font=fm.font(13, "bold"), anchor="w",
+        ).pack(anchor="w")
+        ctk.CTkLabel(
+            info, text=record.team,
+            font=fm.font(11), text_color="gray", anchor="w",
+        ).pack(anchor="w")
+        src_name = Path(record.image_path).name if record.image_path not in ("", "(공식 얼굴)") else record.image_path
+        ctk.CTkLabel(
+            info, text=f"{src_name}  •  {record.changed_at}",
+            font=fm.font(10), text_color="gray", anchor="w",
+        ).pack(anchor="w")
+
+        # 공식 복원 버튼
+        ctk.CTkButton(
+            row, text="공식 복원",
+            width=72, height=32,
+            fg_color="#607D8B", hover_color="#455A64",
+            font=fm.font(11),
+            command=lambda r=record: self._restore_manager_official(r),
+        ).grid(row=0, column=3, padx=4, pady=10)
+
+        # 이력 삭제 버튼
+        ctk.CTkButton(
+            row, text="삭제",
+            width=52, height=32,
+            fg_color="#F44336", hover_color="#C62828",
+            font=fm.font(11),
+            command=lambda r=record: self._delete_manager_record(r),
+        ).grid(row=0, column=4, padx=(0, 10), pady=10)
+
+        # 썸네일 비동기 로드 (로컬 파일)
+        self._load_manager_thumb_async(thumb_label, record.manager_id)
+
+    def _load_manager_thumb_async(self, label: ctk.CTkLabel, manager_id: str):
+        def _worker():
+            img = manager_changer.load_manager_image(self._config, manager_id)
+            if img is None:
+                label.after(0, lambda: label.configure(text="?"))
+                return
+            ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=(_THUMB, _THUMB))
+            label.after(0, lambda i=ctk_img: label.configure(image=i, text=""))
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _restore_manager_official(self, record: ManagerChangeRecord):
+        if not messagebox.askyesno(
+            "공식 복원",
+            f"'{record.manager_name}'의 얼굴을 CDN 공식 이미지로 복원하겠습니까?",
+        ):
+            return
+        try:
+            manager_changer.restore_to_official(
+                manager_id=record.manager_id,
+                manager_name=record.manager_name,
+                team=record.team,
+                config=self._config,
+            )
+            history.remove_manager_record(record.manager_id)
+            if self._on_manager_restored:
+                self._on_manager_restored(record.manager_id)
+            self.refresh()
+        except Exception as e:
+            messagebox.showerror("복원 실패", str(e))
+
+    def _delete_manager_record(self, record: ManagerChangeRecord):
+        if not messagebox.askyesno(
+            "이력 삭제",
+            f"'{record.manager_name}' 변경 이력을 삭제하겠습니까?\n현재 게임 파일은 변경되지 않습니다.",
+        ):
+            return
+        history.remove_manager_record(record.manager_id)
+        self.refresh()
