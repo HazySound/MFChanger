@@ -12,6 +12,8 @@ from typing import Optional
 import requests
 from PIL import Image
 
+from src.core.config import CACHE_DIR
+
 API_BASE = "https://nexon-api-proxy.cemigs1.workers.dev"  # CF Worker 프록시 (API 키 불필요)
 CDN_BASE = "https://fco.dn.nexoncdn.co.kr"               # 이미지 (공개 CDN)
 
@@ -22,7 +24,7 @@ _CDN_IMAGE_PATHS = [
     "playersActionHigh",
     "playersHigh",
 ]
-META_CACHE_PATH = Path.cwd() / ".cache"
+META_CACHE_PATH = CACHE_DIR
 SPID_CACHE_FILE = META_CACHE_PATH / "spid.json"
 CACHE_TTL_DAYS = 30
 
@@ -202,16 +204,24 @@ def fetch_spid_meta(force: bool = False) -> list[dict]:
 
 def sync_meta(backup_dir: Path) -> dict:
     """
-    선수/시즌 메타데이터 강제 동기화.
-    1. 기존 캐시 파일을 backup_dir에 타임스탬프 백업
-    2. CF Worker에서 최신 파일 다운로드 (실패 시 예외 전파)
-    반환: {"spid": 선수수, "seasons": 시즌수}
+    선수/시즌/감독 메타데이터 강제 동기화.
+    1. 기존 캐시 파일(spid/seasonid/managers_db)을 backup_dir에 타임스탬프 백업
+    2. CF Worker에서 spid/seasonid 최신 다운로드 (실패 시 예외 전파)
+    3. 감독 DB 재크롤링 (실패해도 spid/season 동기화는 유지 — best-effort)
+    반환: {"spid": 선수수, "seasons": 시즌수,
+           "managers": 감독수 | None, "managers_error": str | None}
     """
+    from src.core.manager_db import DB_PATH as MANAGER_DB_PATH, ensure_db
+
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     meta_backup = backup_dir / "meta_backup"
 
     season_cache = META_CACHE_PATH / "seasonid.json"
-    for cache_file, prefix in [(SPID_CACHE_FILE, "spid"), (season_cache, "seasonid")]:
+    for cache_file, prefix in [
+        (SPID_CACHE_FILE, "spid"),
+        (season_cache, "seasonid"),
+        (MANAGER_DB_PATH, "managers_db"),
+    ]:
         if cache_file.exists():
             meta_backup.mkdir(parents=True, exist_ok=True)
             shutil.copy2(cache_file, meta_backup / f"{prefix}_{timestamp}.json")
@@ -234,7 +244,21 @@ def sync_meta(backup_dir: Path) -> dict:
         json.dumps(seasons_raw, ensure_ascii=False), encoding="utf-8"
     )
 
-    return {"spid": len(spid_list), "seasons": len(seasons_raw)}
+    # 감독 DB 재크롤링 — 실패해도 위 동기화 결과는 그대로 반환
+    managers_count = None
+    managers_error = None
+    try:
+        manager_db = ensure_db(force_rebuild=True)
+        managers_count = len(manager_db)
+    except Exception as e:
+        managers_error = str(e)
+
+    return {
+        "spid": len(spid_list),
+        "seasons": len(seasons_raw),
+        "managers": managers_count,
+        "managers_error": managers_error,
+    }
 
 
 def search_players(query: str, spid_list: list[dict]) -> list[dict]:
@@ -409,6 +433,30 @@ def get_official_player_image(spid: int) -> Optional[Image.Image]:
         with _image_cache_lock:
             _official_image_cache[spid] = not_found
     return not_found
+
+
+def download_cdn_file(relative: str) -> Optional[bytes]:
+    """CDN의 특정 상대 경로 파일 원본 bytes (예: 'players/p190871.png')."""
+    try:
+        resp = _cdn_session.get(
+            f"{CDN_BASE}/live/externalAssets/common/{relative}", timeout=15
+        )
+        if resp.status_code == 200:
+            return resp.content
+    except Exception:
+        pass
+    return None
+
+
+def get_cdn_image(relative: str) -> Optional[Image.Image]:
+    """공식 미페 프리뷰용 — 데이터센터로 확인된 경로의 CDN 원본 이미지."""
+    data = download_cdn_file(relative)
+    if data is None:
+        return None
+    try:
+        return Image.open(BytesIO(data)).convert("RGBA")
+    except Exception:
+        return None
 
 
 def _get_not_found_image() -> Optional[Image.Image]:

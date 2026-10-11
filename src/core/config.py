@@ -2,10 +2,28 @@
 
 import json
 import os
+import sys
 from pathlib import Path
 
-CONFIG_PATH = Path.cwd() / "config.json"
-API_KEY_PATH = Path.cwd() / "api_key.txt"
+
+def _app_dir() -> Path:
+    """영구 데이터(.cache / config.json / history 등)의 기준 폴더.
+
+    빌드(frozen): exe 파일이 들어있는 폴더.
+    개발 환경: 프로젝트 루트.
+    cwd(현재 작업 폴더)가 아니라 exe/스크립트의 실제 위치를 직접 사용한다 —
+    실행 방식(바로가기·관리자 권한·탐색기 등)과 무관하게 항상 고정.
+    """
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).parent
+    return Path(__file__).resolve().parents[2]
+
+
+APP_DIR = _app_dir()
+CACHE_DIR = APP_DIR / ".cache"
+
+CONFIG_PATH = APP_DIR / "config.json"
+API_KEY_PATH = APP_DIR / "api_key.txt"
 
 DEFAULT_FC_PATH = r"C:\Nexon\EA SPORTS(TM) FC ONLINE"
 FACE_SUBPATH = r"_cache\live\externalAssets\common\playersAction"

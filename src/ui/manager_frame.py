@@ -239,6 +239,25 @@ class ManagerFrame(ctk.CTkFrame):
         self._search_entry.configure(state="normal")
         self._search_btn.configure(state="normal")
 
+    def reload_db(self):
+        """동기화 후 호출 — 갱신된 감독 DB를 다시 읽어 목록/검색 즉시 반영.
+        sync_meta가 이미 force_rebuild로 메모리 캐시를 갱신했으므로
+        ensure_db()는 최신 데이터를 즉시 반환한다."""
+        def _worker():
+            try:
+                from src.core.manager_db import ensure_db
+                db = ensure_db()
+                self.after(0, lambda: self._on_db_reloaded(db))
+            except Exception:
+                pass
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _on_db_reloaded(self, db: dict):
+        self._on_db_loaded(db)
+        if self._search_var.get().strip():
+            self._do_search()
+
     def _do_search(self):
         if not self._db:
             return
@@ -370,7 +389,7 @@ class ManagerFrame(ctk.CTkFrame):
     def _load_official_preview(self, manager_id: str):
         img = manager_changer.fetch_official_image(manager_id)
         if img is None:
-            img = manager_changer.load_generic_image(self._config)
+            img = manager_changer.load_generic_official_image(self._config)
         self.after(0, lambda: self._preview_current.set_image(img))
 
     # ──────────────────────────────────────────

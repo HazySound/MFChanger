@@ -23,6 +23,7 @@ class App(ctk.CTk):
         super().__init__()
         self._config = Config()
         self._update_result: dict = {}
+        updater.cleanup_after_update()
 
         # API 초기화 (CF Worker 프록시 사용 — 클라이언트 키 불필요)
         nexon_api.init("")
@@ -150,7 +151,7 @@ class App(ctk.CTk):
         self._tabs.grid(row=1, column=0, sticky="nsew", padx=0, pady=0)
 
         # 사용법 버튼 — 탭 헤더 우측에 부유 배치
-        ctk.CTkButton(
+        self._help_btn = ctk.CTkButton(
             self,
             text="사용법",
             width=68,
@@ -162,7 +163,8 @@ class App(ctk.CTk):
             text_color=("gray20", "gray90"),
             hover_color=("gray85", "gray30"),
             command=lambda: webbrowser.open("https://github.com/HazySound/MFChanger"),
-        ).place(relx=1.0, rely=0.0, anchor="ne", x=-10, y=8)
+        )
+        self._help_btn.place(relx=1.0, rely=0.0, anchor="ne", x=-10, y=8)
 
         self._tabs.add("미페 변경")
         self._tabs.add("크레스트 변경")
@@ -209,8 +211,9 @@ class App(ctk.CTk):
             self._history_frame.refresh()
 
     def _on_meta_synced(self):
-        """동기화 완료 → 미페 변경 탭 검색 결과 즉시 갱신."""
+        """동기화 완료 → 미페 변경 탭 + 감독 탭 즉시 갱신."""
         self._main_frame.reload_meta()
+        self._manager_frame.reload_db()
 
     def _on_face_restored(self, spid: int):
         """이력에서 미페 복원 → 검색 목록 썸네일 갱신."""
@@ -241,9 +244,11 @@ class App(ctk.CTk):
             self._banner_install_btn.grid_remove()
 
         self._update_banner.grid(row=0, column=0, sticky="ew")
+        self._help_btn.lower()
 
     def _hide_banner(self):
         self._update_banner.grid_forget()
+        self._help_btn.lift()
 
     def _open_update_url(self):
         url = self._update_result.get("url", "")
@@ -316,7 +321,14 @@ class App(ctk.CTk):
 
     def _on_download_complete(self, new_exe):
         self._overlay_pct_label.configure(text="설치 중... 잠시 후 재시작됩니다.", text_color="#4CAF50")
-        self.after(500, lambda: updater.apply_update(new_exe))
+        self.after(500, lambda: self._apply_update(new_exe))
+
+    def _apply_update(self, new_exe):
+        try:
+            updater.apply_update(new_exe)   # 성공 시 반환하지 않음
+        except OSError as e:
+            # exe 교체 실패 (권한/잠금) — 기존 버전은 그대로 유지됨
+            self._on_download_error(f"설치 실패 ({e.strerror or e})")
 
     def _on_download_error(self, msg: str):
         # 오버레이 제거 후 입력 복원

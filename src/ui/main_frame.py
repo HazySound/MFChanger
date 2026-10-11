@@ -9,7 +9,7 @@ from typing import Optional
 import customtkinter as ctk
 from PIL import Image
 
-from src.api import nexon_api
+from src.api import datacenter, nexon_api
 from src.core.config import Config
 from src.core import face_changer, history
 from src.ui.components.image_preview import ImagePreview
@@ -25,6 +25,8 @@ class MainFrame(ctk.CTkFrame):
         self._selected_image_path: Optional[Path] = None
         self._loading_image = False
         self._preview_mode = "현재 미페"   # "현재 미페" | "공식 미페"
+        # 게임이 실제 사용하는 미페 파일 (선수 선택 시 데이터센터 조회, 완료 전 None)
+        self._face_path: Optional[datacenter.FacePath] = None
 
         self._build()
         self._load_meta_data()
@@ -99,6 +101,12 @@ class MainFrame(ctk.CTkFrame):
             info_frame, text="", font=fm.font(11), text_color="#FF9800"
         )
         self._player_status_label.pack(anchor="w", pady=(6, 0))
+
+        self._player_target_label = ctk.CTkLabel(
+            info_frame, text="", font=fm.font(11), text_color="gray",
+            justify="left", anchor="w",
+        )
+        self._player_target_label.pack(anchor="w", pady=(2, 0))
 
         # 파일 위치 열기 버튼
         self._open_folder_btn = ctk.CTkButton(
@@ -253,17 +261,55 @@ class MainFrame(ctk.CTkFrame):
         self._player_spid_label.configure(text=f"SPID: p{spid}")
         self._player_season_label.configure(text=f"시즌: {season_name}")
 
+        self._player_status_label.configure(text="")
+        self._player_target_label.configure(text="게임 파일 확인 중...", text_color="gray")
+        self._face_path = None
+        self._open_folder_btn.configure(state="disabled")
+        self._restore_official_btn.configure(state="disabled")
+        self._update_apply_btn()
+        self._preview_current.clear()
+
+        def _worker():
+            fp = datacenter.resolve_face_path(spid, name)
+            self.after(0, lambda: self._on_face_path_resolved(spid, fp))
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _on_face_path_resolved(self, spid: int, fp: datacenter.FacePath):
+        # 조회 중 다른 선수를 선택했으면 무시
+        if not self._selected_player or self._selected_player.get("id") != spid:
+            return
+        self._face_path = fp
+        self._update_status_label(spid)
+
+        if not fp.verified:
+            text = f"게임 파일: {fp.relative}\n(데이터센터 확인 실패 - 추정 경로)"
+            color = "#FF9800"
+        elif fp.shared_spids:
+            text = f"게임 파일: {fp.relative}\n이 선수의 카드 {len(fp.shared_spids) + 1}장이 공유"
+            color = "#FF9800"
+        else:
+            text = f"게임 파일: {fp.relative}"
+            color = "gray"
+        self._player_target_label.configure(text=text, text_color=color)
+
+        self._open_folder_btn.configure(state="normal")
+        self._restore_official_btn.configure(state="normal")
+        self._update_apply_btn()
+        self._load_player_image(spid)
+
+    def _update_status_label(self, spid: int):
         record = history.find_record(spid)
+        if record is None and self._face_path and self._face_path.shared_spids:
+            # 같은 파일을 공유하는 다른 카드에서 변경한 기록
+            record = history.find_record_by_target(self._face_path.relative)
         if record:
             self._player_status_label.configure(text=f"변경됨: {record.changed_at}")
         else:
             self._player_status_label.configure(text="")
 
-        self._open_folder_btn.configure(state="normal")
-        self._restore_official_btn.configure(state="normal")
-        self._update_apply_btn()
-        self._preview_current.clear()
-        self._load_player_image(spid)
+    def _target_file(self, spid: int) -> Path:
+        rel = self._face_path.relative if self._face_path else None
+        return face_changer.target_file(self._config, spid, rel)
 
     def _on_preview_toggle(self, mode: str):
         self._preview_mode = mode
@@ -272,14 +318,16 @@ class MainFrame(ctk.CTkFrame):
             self._load_player_image(spid)
 
     def _load_player_image(self, spid: int):
+        if self._face_path is None:
+            return  # 경로 조회 완료 시 다시 호출됨
         if self._loading_image:
             return
         self._loading_image = True
         self._preview_current.clear()
 
         if self._preview_mode == "현재 미페":
-            # 로컬 파일에서 로드
-            local_file = self._config.face_dir / f"p{spid}.png"
+            # 게임이 실제 사용하는 로컬 파일에서 로드
+            local_file = self._target_file(spid)
             if local_file.exists():
                 self._preview_current.set_from_path(local_file)
             else:
@@ -288,8 +336,12 @@ class MainFrame(ctk.CTkFrame):
             self._loading_image = False
         else:
             # 공식 미페: CDN 전용 (로컬에서 바꾼 것과 무관하게 원본 표시)
+            fp = self._face_path
+
             def _worker():
-                img = nexon_api.get_official_player_image(spid)
+                img = nexon_api.get_cdn_image(fp.relative) if fp.verified else None
+                if img is None:
+                    img = nexon_api.get_official_player_image(spid)
                 self.after(0, lambda: self._on_image_loaded(img))
             threading.Thread(target=_worker, daemon=True).start()
 
@@ -303,12 +355,12 @@ class MainFrame(ctk.CTkFrame):
         spid = self._selected_player.get("id", 0)
 
         if self._preview_mode == "현재 미페":
-            # 현재 미페 모드: 게임의 playersAction 로컬 파일
-            target = self._config.face_dir / f"p{spid}.png"
+            # 현재 미페 모드: 게임이 실제 사용하는 로컬 파일
+            target = self._target_file(spid)
             if target.exists():
                 subprocess.Popen(f'explorer /select,"{target}"')
-            elif self._config.face_dir.exists():
-                subprocess.Popen(f'explorer "{self._config.face_dir}"')
+            elif target.parent.exists():
+                subprocess.Popen(f'explorer "{target.parent}"')
             else:
                 messagebox.showwarning("경로 없음", f"미페 폴더를 찾을 수 없습니다.\n{self._config.face_dir}")
         else:
@@ -377,17 +429,18 @@ class MainFrame(ctk.CTkFrame):
     def _paste_image(self, _event=None):
         try:
             from PIL import ImageGrab
+            from src.core.config import CACHE_DIR
             img = ImageGrab.grabclipboard()
             if isinstance(img, Image.Image):
-                tmp = Path.cwd() / ".cache" / "_clipboard.png"
-                tmp.parent.mkdir(exist_ok=True)
+                tmp = CACHE_DIR / "_clipboard.png"
+                tmp.parent.mkdir(parents=True, exist_ok=True)
                 img.save(tmp, "PNG")
                 self._set_image(tmp)
         except Exception:
             pass
 
     def _update_apply_btn(self):
-        if self._selected_player and self._selected_image_path:
+        if self._selected_player and self._selected_image_path and self._face_path:
             self._apply_btn.configure(state="normal")
         else:
             self._apply_btn.configure(state="disabled")
@@ -408,6 +461,10 @@ class MainFrame(ctk.CTkFrame):
             )
             return
 
+        fp = self._face_path
+        if fp is None or not self._confirm_target(name, fp):
+            return
+
         self._apply_btn.configure(state="disabled", text="처리 중...")
         self._result_label.configure(text="")
 
@@ -418,6 +475,7 @@ class MainFrame(ctk.CTkFrame):
                     player_name=name,
                     src_image_path=self._selected_image_path,
                     config=self._config,
+                    target_path=fp.relative,
                 )
                 history.add_record(record)
                 self.after(0, self._on_change_success)
@@ -427,14 +485,46 @@ class MainFrame(ctk.CTkFrame):
 
         threading.Thread(target=_worker, daemon=True).start()
 
+    def _confirm_target(self, name: str, fp: datacenter.FacePath) -> bool:
+        """공유 파일/추정 경로일 때 교체 전 확인."""
+        if not fp.verified:
+            return messagebox.askyesno(
+                "게임 파일 확인 실패",
+                "데이터센터에서 이 카드가 사용하는 미페 파일을 확인하지 못했습니다.\n"
+                f"추정 경로({fp.relative})에 적용하지만 인게임에 반영되지 않을 수 있습니다.\n\n"
+                "계속하시겠습니까?",
+            )
+        if fp.relative == datacenter.NOT_FOUND_PATH:
+            messagebox.showwarning(
+                "교체 불가",
+                "이 카드는 게임에서 기본 이미지(not_found)를 사용하고 있어 교체할 수 없습니다.\n"
+                "(교체하면 미페가 없는 모든 선수의 이미지가 바뀝니다)",
+            )
+            return False
+        if fp.shared_spids:
+            season_map = self._search_panel._season_map
+            seasons = [
+                season_map.get(nexon_api.get_season_id(s), {}).get("shortName", str(s))
+                for s in fp.shared_spids
+            ]
+            shown = ", ".join(seasons[:12])
+            if len(seasons) > 12:
+                shown += f" 외 {len(seasons) - 12}장"
+            return messagebox.askyesno(
+                "공유 미페 파일",
+                f"게임에서 '{name}'의 카드 {len(fp.shared_spids) + 1}장이 같은 미페 파일을 사용합니다.\n"
+                f"({fp.relative})\n\n"
+                f"함께 바뀌는 카드: {shown}\n\n"
+                "카드별로 따로 바꿀 수 없습니다. 계속하시겠습니까?",
+            )
+        return True
+
     def _on_change_success(self):
         self._apply_btn.configure(state="normal", text="미페 교체 실행")
         self._result_label.configure(text="미페 교체 완료!", text_color="#4CAF50")
         if self._selected_player:
             spid = self._selected_player.get("id", 0)
-            record = history.find_record(spid)
-            if record:
-                self._player_status_label.configure(text=f"변경됨: {record.changed_at}")
+            self._update_status_label(spid)
             self.refresh_thumb(spid)
             if self._preview_mode == "현재 미페":
                 self._load_player_image(spid)
@@ -450,6 +540,9 @@ class MainFrame(ctk.CTkFrame):
 
         spid = self._selected_player.get("id", 0)
         name = self._selected_player.get("name", "")
+        fp = self._face_path
+        if fp is None:
+            return
 
         if not messagebox.askyesno(
             "공식 미페로 복원",
@@ -471,7 +564,10 @@ class MainFrame(ctk.CTkFrame):
 
         def _worker():
             try:
-                record = face_changer.restore_to_official(spid, name, self._config)
+                record = face_changer.restore_to_official(
+                    spid, name, self._config,
+                    target_path=fp.relative if fp.verified else None,
+                )
                 history.add_record(record)
                 self.after(0, lambda: self._on_restore_official_success(spid))
             except Exception as e:

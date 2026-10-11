@@ -11,7 +11,9 @@ from pathlib import Path
 import requests
 from bs4 import BeautifulSoup
 
-DB_PATH = Path.cwd() / ".cache" / "managers_db.json"
+from .config import CACHE_DIR
+
+DB_PATH = CACHE_DIR / "managers_db.json"
 _DATACENTER_URL = "https://fconline.nexon.com/datacenter/manager"
 _HEADERS = {
     "User-Agent": (

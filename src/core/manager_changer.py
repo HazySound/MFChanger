@@ -2,6 +2,7 @@
 
 import ctypes
 import io
+import shutil
 import stat
 from dataclasses import dataclass
 from datetime import datetime
@@ -58,6 +59,20 @@ def load_generic_image(config: Config) -> Optional[Image.Image]:
         return None
 
 
+def load_generic_official_image(config: Config) -> Optional[Image.Image]:
+    """공식 얼굴 미리보기용 generic 폴백.
+    generic_backup.png 가 있으면 원본 백업을 우선 반환, 없으면 generic.png."""
+    manager_dir = get_manager_dir(config)
+    for name in ("generic_backup.png", "generic.png"):
+        path = manager_dir / name
+        if path.exists():
+            try:
+                return Image.open(path).convert("RGBA")
+            except Exception:
+                pass
+    return None
+
+
 def _set_readonly(path: Path):
     path.chmod(stat.S_IREAD | stat.S_IRGRP | stat.S_IROTH)
     try:
@@ -86,6 +101,16 @@ def _to_png_bytes(src_path: Path) -> bytes:
     return buf.getvalue()
 
 
+def _backup_generic_once(manager_dir: Path):
+    """generic.png를 generic_backup.png로 최초 1회 백업. 백업이 이미 있으면 아무것도 안 함."""
+    backup = manager_dir / "generic_backup.png"
+    if backup.exists():
+        return
+    generic = manager_dir / "generic.png"
+    if generic.exists():
+        shutil.copy2(str(generic), str(backup))
+
+
 def replace_manager(
     manager_id: str,
     manager_name: str,
@@ -93,7 +118,12 @@ def replace_manager(
     src_image_path: Path,
     config: Config,
 ) -> ManagerChangeRecord:
-    """감독 얼굴 교체."""
+    """감독 얼굴 교체.
+
+    heads_staff_{id}.png 가 존재하면 해당 파일을 교체.
+    존재하지 않으면(generic 폴백 감독) generic.png 를 교체하되,
+    최초 1회 generic_backup.png 를 만들어 둔다.
+    """
     manager_dir = get_manager_dir(config)
     if not manager_dir.exists():
         raise FileNotFoundError(
@@ -102,12 +132,21 @@ def replace_manager(
         )
 
     dest = get_manager_file(config, manager_id)
-    if dest.exists():
-        _remove_readonly(dest)
-
     png_bytes = _to_png_bytes(src_image_path)
-    dest.write_bytes(png_bytes)
-    _set_readonly(dest)
+
+    if dest.exists():
+        # 고유 파일 존재 → 직접 교체
+        _remove_readonly(dest)
+        dest.write_bytes(png_bytes)
+        _set_readonly(dest)
+    else:
+        # generic 폴백 감독 → generic.png 교체
+        _backup_generic_once(manager_dir)
+        generic = manager_dir / "generic.png"
+        if generic.exists():
+            _remove_readonly(generic)
+        generic.write_bytes(png_bytes)
+        _set_readonly(generic)
 
     return ManagerChangeRecord(
         manager_id=manager_id,
@@ -124,7 +163,13 @@ def restore_to_official(
     team: str,
     config: Config,
 ) -> ManagerChangeRecord:
-    """CDN에서 공식 감독 얼굴을 다운로드해 덮어씀."""
+    """공식 감독 얼굴로 복원.
+
+    CDN 다운로드에 성공하면 heads_staff_{id}.png 를 덮어씀.
+    실패했을 때 고유 파일이 없는 감독(generic 폴백)이면
+    generic_backup.png 로 generic.png 를 복원한다.
+    백업도 없으면 에러를 그대로 올린다.
+    """
     manager_dir = get_manager_dir(config)
     if not manager_dir.exists():
         raise FileNotFoundError(
@@ -132,21 +177,40 @@ def restore_to_official(
         )
 
     url = f"{CDN_BASE}/live/externalAssets/common/managers/heads_staff_{manager_id}.png"
-    resp = _session.get(url, timeout=15)
-    if resp.status_code != 200:
-        raise ValueError(f"공식 감독 이미지를 가져올 수 없습니다. (HTTP {resp.status_code})")
+    try:
+        resp = _session.get(url, timeout=15)
+        cdn_ok = resp.status_code == 200
+    except Exception:
+        cdn_ok = False
+        resp = None
 
-    dest = get_manager_file(config, manager_id)
-    if dest.exists():
-        _remove_readonly(dest)
-    dest.write_bytes(resp.content)
-    _set_readonly(dest)
+    if cdn_ok:
+        dest = get_manager_file(config, manager_id)
+        if dest.exists():
+            _remove_readonly(dest)
+        dest.write_bytes(resp.content)
+        _set_readonly(dest)
+        image_path_str = "(공식 얼굴)"
+    else:
+        # CDN 실패 — generic 폴백 감독(고유 파일 없음) + 백업 있으면 generic 복원
+        dest = get_manager_file(config, manager_id)
+        backup = manager_dir / "generic_backup.png"
+        if not dest.exists() and backup.exists():
+            generic = manager_dir / "generic.png"
+            if generic.exists():
+                _remove_readonly(generic)
+            shutil.copy2(str(backup), str(generic))
+            _set_readonly(generic)
+            image_path_str = "(generic 원본으로 복원)"
+        else:
+            status = resp.status_code if resp is not None else "연결 실패"
+            raise ValueError(f"공식 감독 이미지를 가져올 수 없습니다. (HTTP {status})")
 
     return ManagerChangeRecord(
         manager_id=manager_id,
         manager_name=manager_name,
         team=team,
-        image_path="(공식 얼굴)",
+        image_path=image_path_str,
         changed_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     )
 

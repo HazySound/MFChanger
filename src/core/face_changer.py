@@ -21,6 +21,51 @@ class ChangeRecord:
     changed_at: str
     backup_path: Optional[str] = None
     result_path: Optional[str] = None   # 이 기록이 적용한 결과 스냅샷
+    # 실제로 덮어쓴 게임 파일 (assets 기준 상대 경로, 예: "players/p190871.png")
+    # None = 구버전 기록 → playersAction/p{spid}.png
+    target_path: Optional[str] = None
+
+
+def target_file(config: Config, spid: int, target_path: Optional[str]) -> Path:
+    """기록/조회 결과의 상대 경로 → 실제 게임 파일 경로."""
+    rel = target_path or f"playersAction/p{spid}.png"
+    return config.assets_dir / rel
+
+
+def _check_assets_dir(config: Config):
+    if not config.face_dir.exists():
+        raise FileNotFoundError(
+            f"FC온라인 미페 폴더를 찾을 수 없습니다.\n경로: {config.face_dir}\n\n"
+            "설정에서 FC온라인 설치 경로를 확인해주세요."
+        )
+
+
+def _write_game_file(spid: int, dest_file: Path, png_bytes: bytes, config: Config):
+    """기존 파일 백업 → 덮어쓰기 → 읽기전용 → 결과 스냅샷. (backup_path, result_path) 반환."""
+    backup_path: Optional[str] = None
+    backup_dir = config.backup_path / f"p{spid}"
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+
+    if dest_file.exists():
+        _remove_readonly(dest_file)
+        if config.backup_enabled:
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            backup_file = backup_dir / f"p{spid}_backup_{timestamp}.png"
+            shutil.copy2(dest_file, backup_file)
+            backup_path = str(backup_file)
+
+    dest_file.parent.mkdir(parents=True, exist_ok=True)
+    dest_file.write_bytes(png_bytes)
+    _set_readonly(dest_file)
+
+    result_path: Optional[str] = None
+    if config.backup_enabled:
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        result_file = backup_dir / f"p{spid}_result_{timestamp}.png"
+        result_file.write_bytes(png_bytes)
+        result_path = str(result_file)
+
+    return backup_path, result_path
 
 
 def _set_readonly(path: Path):
@@ -65,55 +110,21 @@ def replace_face(
     player_name: str,
     src_image_path: Path,
     config: Config,
+    target_path: Optional[str] = None,
 ) -> ChangeRecord:
     """
     미페 교체 실행.
 
+    target_path: 게임이 실제 사용하는 파일의 상대 경로 (datacenter.resolve_face_path).
+                 None이면 playersAction/p{spid}.png.
     1. 기존 파일 백업 (설정에 따라)
-    2. src_image_path → PNG 변환
-    3. face_dir/p{spid}.png 로 복사
-    4. 읽기전용 설정
+    2. src_image_path → PNG 변환 후 덮어쓰기
+    3. 읽기전용 설정
     """
-    face_dir = config.face_dir
-    if not face_dir.exists():
-        raise FileNotFoundError(
-            f"FC온라인 미페 폴더를 찾을 수 없습니다.\n경로: {face_dir}\n\n"
-            "설정에서 FC온라인 설치 경로를 확인해주세요."
-        )
-
-    dest_file = face_dir / f"p{spid}.png"
-    backup_path: Optional[str] = None
-
-    # 기존 파일 백업
-    if config.backup_enabled and dest_file.exists():
-        backup_dir = config.backup_path / f"p{spid}"
-        backup_dir.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_file = backup_dir / f"p{spid}_backup_{timestamp}.png"
-        _remove_readonly(dest_file)
-        shutil.copy2(dest_file, backup_file)
-        backup_path = str(backup_file)
-
-    # 기존 파일 읽기전용 해제
-    if dest_file.exists():
-        _remove_readonly(dest_file)
-
-    # 이미지 변환 후 저장
+    _check_assets_dir(config)
+    dest_file = target_file(config, spid, target_path)
     png_bytes = _convert_to_png(src_image_path)
-    dest_file.write_bytes(png_bytes)
-
-    # 읽기전용 설정
-    _set_readonly(dest_file)
-
-    # 적용 결과 스냅샷 저장 (백업 활성화 시)
-    result_path: Optional[str] = None
-    if config.backup_enabled:
-        backup_dir = config.backup_path / f"p{spid}"
-        backup_dir.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        result_file = backup_dir / f"p{spid}_result_{timestamp}.png"
-        result_file.write_bytes(png_bytes)
-        result_path = str(result_file)
+    backup_path, result_path = _write_game_file(spid, dest_file, png_bytes, config)
 
     return ChangeRecord(
         spid=spid,
@@ -122,58 +133,40 @@ def replace_face(
         changed_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         backup_path=backup_path,
         result_path=result_path,
+        target_path=target_path,
     )
 
 
-def restore_to_official(spid: int, player_name: str, config: Config) -> ChangeRecord:
+def restore_to_official(
+    spid: int,
+    player_name: str,
+    config: Config,
+    target_path: Optional[str] = None,
+) -> ChangeRecord:
     """
     공식 미페(CDN)를 다운로드해 로컬 파일로 덮어씀.
+    target_path가 있으면 CDN의 같은 경로 파일을 그대로 받아온다.
     기존 파일은 백업 설정에 따라 백업 후 교체.
     """
-    import io
     from src.api import nexon_api
 
-    face_dir = config.face_dir
-    if not face_dir.exists():
-        raise FileNotFoundError(
-            f"FC온라인 미페 폴더를 찾을 수 없습니다.\n경로: {face_dir}\n\n"
-            "설정에서 FC온라인 설치 경로를 확인해주세요."
-        )
+    _check_assets_dir(config)
 
-    img = nexon_api.get_official_player_image(spid)
-    if img is None:
+    if target_path:
+        png_bytes = nexon_api.download_cdn_file(target_path)
+    else:
+        img = nexon_api.get_official_player_image(spid)
+        png_bytes = None
+        if img is not None:
+            import io
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            png_bytes = buf.getvalue()
+    if png_bytes is None:
         raise ValueError("공식 미페를 가져올 수 없습니다. 인터넷 연결을 확인해주세요.")
 
-    dest_file = face_dir / f"p{spid}.png"
-    backup_path: Optional[str] = None
-
-    if config.backup_enabled and dest_file.exists():
-        backup_dir = config.backup_path / f"p{spid}"
-        backup_dir.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_file = backup_dir / f"p{spid}_backup_{timestamp}.png"
-        _remove_readonly(dest_file)
-        shutil.copy2(dest_file, backup_file)
-        backup_path = str(backup_file)
-
-    if dest_file.exists():
-        _remove_readonly(dest_file)
-
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    png_bytes = buf.getvalue()
-    dest_file.write_bytes(png_bytes)
-    _set_readonly(dest_file)
-
-    # 적용 결과 스냅샷 저장 (백업 활성화 시)
-    result_path: Optional[str] = None
-    if config.backup_enabled:
-        backup_dir = config.backup_path / f"p{spid}"
-        backup_dir.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        result_file = backup_dir / f"p{spid}_result_{timestamp}.png"
-        result_file.write_bytes(png_bytes)
-        result_path = str(result_file)
+    dest_file = target_file(config, spid, target_path)
+    backup_path, result_path = _write_game_file(spid, dest_file, png_bytes, config)
 
     return ChangeRecord(
         spid=spid,
@@ -182,6 +175,7 @@ def restore_to_official(spid: int, player_name: str, config: Config) -> ChangeRe
         changed_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         backup_path=backup_path,
         result_path=result_path,
+        target_path=target_path,
     )
 
 
@@ -190,8 +184,7 @@ def restore_face(record: ChangeRecord, config: Config) -> bool:
     백업 파일로 복원.
     백업이 없으면 교체된 파일만 삭제(게임 자체 리소스로 복구).
     """
-    face_dir = config.face_dir
-    dest_file = face_dir / f"p{record.spid}.png"
+    dest_file = target_file(config, record.spid, record.target_path)
 
     if dest_file.exists():
         _remove_readonly(dest_file)

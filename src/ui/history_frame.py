@@ -144,11 +144,10 @@ class FaceHistoryGroup(ctk.CTkFrame):
     def _build_entries(self):
         """최신순으로 항목 표시."""
         n = len(self._records)
-        game_file = str(self._config.face_dir / f"p{self._spid}.png")
-
         for display_idx, record in enumerate(reversed(self._records)):
             pos = n - 1 - display_idx   # 원본 리스트 인덱스
             is_active = (display_idx == 0)
+            game_file = str(face_changer.target_file(self._config, record.spid, record.target_path))
 
             # after_path 계산 (우선순위: result_path → 다음기록 backup → 현재게임파일)
             rp = record.result_path
@@ -610,19 +609,26 @@ class HistoryFrame(ctk.CTkFrame):
             f"'{record.manager_name}'의 얼굴을 CDN 공식 이미지로 복원하겠습니까?",
         ):
             return
-        try:
-            manager_changer.restore_to_official(
-                manager_id=record.manager_id,
-                manager_name=record.manager_name,
-                team=record.team,
-                config=self._config,
-            )
-            history.remove_manager_record(record.manager_id)
-            if self._on_manager_restored:
-                self._on_manager_restored(record.manager_id)
-            self.refresh()
-        except Exception as e:
-            messagebox.showerror("복원 실패", str(e))
+
+        def _worker():
+            try:
+                manager_changer.restore_to_official(
+                    manager_id=record.manager_id,
+                    manager_name=record.manager_name,
+                    team=record.team,
+                    config=self._config,
+                )
+                history.remove_manager_record(record.manager_id)
+                def _done():
+                    if self._on_manager_restored:
+                        self._on_manager_restored(record.manager_id)
+                    self.refresh()
+                self.after(0, _done)
+            except Exception as e:
+                msg = str(e)
+                self.after(0, lambda m=msg: messagebox.showerror("복원 실패", m))
+
+        threading.Thread(target=_worker, daemon=True).start()
 
     def _delete_manager_record(self, record: ManagerChangeRecord):
         if not messagebox.askyesno(
@@ -631,4 +637,4 @@ class HistoryFrame(ctk.CTkFrame):
         ):
             return
         history.remove_manager_record(record.manager_id)
-        self.refresh()
+        self.after(0, self.refresh)

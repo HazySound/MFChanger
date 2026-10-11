@@ -121,7 +121,7 @@ class SettingsFrame(ctk.CTkFrame):
         self._sync_btn.pack(side="left", padx=(0, 12))
 
         self._sync_status = ctk.CTkLabel(
-            sync_btn_frame, text="선수 목록과 시즌 정보를 최신으로 업데이트합니다.",
+            sync_btn_frame, text="선수·시즌·감독 정보를 최신으로 업데이트합니다.",
             font=fm.font(11), text_color="gray"
         )
         self._sync_status.pack(side="left")
@@ -218,11 +218,21 @@ class SettingsFrame(ctk.CTkFrame):
     def _on_sync_complete(self, result: dict):
         spid_count = result.get("spid", 0)
         season_count = result.get("seasons", 0)
+        manager_count = result.get("managers")
+        manager_error = result.get("managers_error")
         self._sync_btn.configure(state="normal", text="데이터 동기화")
-        self._sync_status.configure(
-            text=f"완료 — 선수 {spid_count:,}명 / 시즌 {season_count}개",
-            text_color="#4CAF50",
-        )
+
+        base = f"완료 — 선수 {spid_count:,}명 / 시즌 {season_count}개"
+        if manager_count is not None:
+            self._sync_status.configure(
+                text=f"{base} / 감독 {manager_count}명", text_color="#4CAF50"
+            )
+        else:
+            # spid/season은 성공, 감독 갱신만 실패한 경우
+            self._sync_status.configure(
+                text=f"{base} (감독 갱신 실패: {manager_error})",
+                text_color="#FF9800",
+            )
         if self._on_sync_done:
             self._on_sync_done()
 
