@@ -1,22 +1,21 @@
 """크레스트 교체 핵심 로직"""
 
-import shutil
 from dataclasses import dataclass, field
-from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from PIL import Image
-
+from . import fileops
 from .config import Config
-from .face_changer import _set_readonly, _remove_readonly
-
 
 # 테마별 파일 접두사
 THEME_PREFIX = {"dark": "d", "light": "l"}
 
 # 사이즈별 픽셀 크기
 SIZE_PX = {"large": 256, "medium": 128, "small": 64}
+
+PREVIEW_THEME, PREVIEW_SIZE = "dark", "large"
+
+IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
 
 
 @dataclass
@@ -28,35 +27,33 @@ class CrestChangeRecord:
 
 
 def get_crest_file(crest_dir: Path, theme: str, size: str, crest_id: int) -> Path:
-    """크레스트 파일 경로 반환."""
-    prefix = THEME_PREFIX[theme]
-    return crest_dir / theme / size / f"{prefix}{crest_id}.png"
+    return crest_dir / theme / size / f"{THEME_PREFIX[theme]}{crest_id}.png"
 
 
-def load_crest_image(crest_dir: Path, crest_id: int) -> Optional[Image.Image]:
-    """dark/large 크레스트 이미지 로드 (미리보기용)."""
-    path = get_crest_file(crest_dir, "dark", "large", crest_id)
-    if not path.exists():
-        return None
-    try:
-        return Image.open(path).convert("RGBA")
-    except Exception:
-        return None
+def preview_file(config: Config, crest_id: int) -> Path:
+    """미리보기에 쓰는 대표 파일 (dark/large)."""
+    return get_crest_file(config.crest_dir, PREVIEW_THEME, PREVIEW_SIZE, crest_id)
 
 
-def replace_crest(
-    crest_id: int,
-    src_image_path: Path,
-    config: Config,
-) -> CrestChangeRecord:
-    """
-    크레스트 교체 실행.
+def parse_crest_id(text: str) -> Optional[int]:
+    """'1234', 'd1234', 'l1234', '1234.png', 'l1234.jpg' 형식에서 크레스트 ID 추출."""
+    s = text.strip()
+    if Path(s).suffix.lower() in IMAGE_SUFFIXES:
+        s = Path(s).stem
+    if len(s) > 1 and s[0].lower() in THEME_PREFIX.values():
+        s = s[1:]
+    return int(s) if s.isdigit() else None
 
-    1. 기존 파일 백업 (설정에 따라)
-    2. src_image_path 로드 → 비정방형이면 중앙 크롭
-    3. dark/light × large/medium/small 총 6개 경로에 맞는 크기로 리사이징 후 저장
-    4. 각 파일 읽기전용 설정
-    """
+
+def _variants(crest_dir: Path, crest_id: int):
+    """(theme, size_name, size_px, 파일 경로) — 6개 조합."""
+    for theme in THEME_PREFIX:
+        for size_name, size_px in SIZE_PX.items():
+            yield theme, size_name, size_px, get_crest_file(crest_dir, theme, size_name, crest_id)
+
+
+def replace_crest(crest_id: int, src_image_path: Path, config: Config) -> CrestChangeRecord:
+    """dark/light × large/medium/small 6개 파일을 각 크기로 리사이즈해 교체."""
     crest_dir = config.crest_dir
     if not crest_dir.exists():
         raise FileNotFoundError(
@@ -64,87 +61,48 @@ def replace_crest(
             "설정에서 FC온라인 설치 경로를 확인해주세요."
         )
 
-    # 소스 이미지 로드 + 정방형 크롭
-    img = Image.open(src_image_path).convert("RGBA")
-    w, h = img.size
-    if w != h:
-        side = min(w, h)
-        left = (w - side) // 2
-        top = (h - side) // 2
-        img = img.crop((left, top, left + side, top + side))
-
+    img = fileops.load_square(src_image_path)
+    stamp = fileops.timestamp()
     backup_paths: list[str] = []
 
-    for theme, prefix in THEME_PREFIX.items():
-        for size_name, size_px in SIZE_PX.items():
-            dest_file = get_crest_file(crest_dir, theme, size_name, crest_id)
+    for theme, size_name, size_px, dest_file in _variants(crest_dir, crest_id):
+        # 게임 설치에 해당 폴더가 없으면 건너뜀
+        if not dest_file.parent.exists():
+            continue
 
-            # 대상 폴더 없으면 건너뜀 (게임 설치에 해당 폴더가 없는 경우)
-            if not dest_file.parent.exists():
-                continue
+        if config.backup_enabled and dest_file.exists():
+            backup_dir = config.backup_path / f"crest_{crest_id}" / theme / size_name
+            backup_file = backup_dir / f"{dest_file.stem}_backup_{stamp}.png"
+            fileops.copy_backup(dest_file, backup_file)
+            backup_paths.append(str(backup_file))
 
-            # 기존 파일 백업
-            if config.backup_enabled and dest_file.exists():
-                backup_dir = (
-                    config.backup_path
-                    / f"crest_{crest_id}"
-                    / theme
-                    / size_name
-                )
-                backup_dir.mkdir(parents=True, exist_ok=True)
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                backup_file = backup_dir / f"{prefix}{crest_id}_backup_{timestamp}.png"
-                _remove_readonly(dest_file)
-                shutil.copy2(dest_file, backup_file)
-                backup_paths.append(str(backup_file))
-
-            # 읽기전용 해제
-            if dest_file.exists():
-                _remove_readonly(dest_file)
-
-            # 리사이징 후 저장
-            resized = img.resize((size_px, size_px), Image.LANCZOS)
-            resized.save(dest_file, format="PNG")
-            _set_readonly(dest_file)
+        fileops.write_game_file(dest_file, fileops.to_png_bytes(img, size_px))
 
     return CrestChangeRecord(
         crest_id=crest_id,
         image_path=str(src_image_path),
-        changed_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        changed_at=fileops.now_text(),
         backup_paths=backup_paths,
     )
 
 
+def _find_backup(record: CrestChangeRecord, theme: str, size_name: str) -> Optional[Path]:
+    for bp in record.backup_paths:
+        path = Path(bp)
+        if path.parent.parts[-2:] == (theme, size_name) and path.exists():
+            return path
+    return None
+
+
 def restore_crest(record: CrestChangeRecord, config: Config) -> bool:
-    """
-    백업 파일로 크레스트 복원.
-    백업이 없으면 교체된 파일 삭제(게임 자체 리소스로 복구).
-    """
-    crest_dir = config.crest_dir
+    """백업으로 복원. 백업이 없는 파일은 삭제해 게임이 다시 받게 한다."""
     any_restored = False
-
-    for theme, prefix in THEME_PREFIX.items():
-        for size_name in SIZE_PX:
-            dest_file = get_crest_file(crest_dir, theme, size_name, record.crest_id)
-
-            # theme/size 에 해당하는 백업 파일 찾기
-            backup_file: Optional[Path] = None
-            for bp in record.backup_paths:
-                if (f"/{theme}/{size_name}/" in bp or f"\\{theme}\\{size_name}\\" in bp):
-                    candidate = Path(bp)
-                    if candidate.exists():
-                        backup_file = candidate
-                        break
-
-            if dest_file.exists():
-                _remove_readonly(dest_file)
-
-            if backup_file:
-                shutil.copy2(backup_file, dest_file)
-                _set_readonly(dest_file)
-                any_restored = True
-            else:
-                if dest_file.exists():
-                    dest_file.unlink()
-
+    for theme, size_name, _, dest_file in _variants(config.crest_dir, record.crest_id):
+        backup_file = _find_backup(record, theme, size_name)
+        if backup_file:
+            fileops.write_game_file(dest_file, backup_file.read_bytes())
+            any_restored = True
+        elif dest_file.exists():
+            fileops.remove_readonly(dest_file)
+            dest_file.unlink()
     return any_restored

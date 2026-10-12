@@ -9,43 +9,43 @@
 
 ```
 MFChanger/
-├── main.py                              # 진입점
+├── main.py                              # 진입점 (pywebview 창 + 로컬 서버)
+├── build.py                             # 릴리즈 빌드 (화면 빌드 → exe)
 ├── version.py                           # 버전 정보
-├── requirements.txt                     # 의존성 목록
-├── api_key.txt                          # Nexon Open API 키 (gitignore 대상)
 ├── config.json                          # 사용자 설정 (자동 생성)
 ├── history.json                         # 미페 변경 이력 (자동 생성)
 ├── crest_history.json                   # 크레스트 변경 이력 (자동 생성)
 ├── manager_history.json                 # 감독 변경 이력 (자동 생성)
-├── REQUIREMENTS.md                      # 기획 요구사항 문서
-├── DEVLOG.md                            # 본 개발 일지
 ├── .cache/
 │   ├── spid.json                        # 선수 메타데이터 캐시
 │   ├── seasonid.json                    # 시즌 메타데이터 캐시
-│   └── managers_db.json                 # 감독 DB 캐시 (크롤링으로 생성)
+│   ├── managers_db.json                 # 감독 DB 캐시 (크롤링으로 생성)
+│   ├── face_paths.json                  # 데이터센터 미페 경로 캐시 (gitignore)
+│   └── uploads/                         # 드롭·붙여넣기 이미지 임시 보관 (실행 시 정리)
+├── frontend/                            # 화면 — Svelte 5 + Vite + TypeScript
+│   └── src/
+│       ├── App.svelte                   # 탭 구조, 업데이트 배너, DB 생성 화면
+│       ├── app.css                      # 디자인 토큰 + 공통 스타일
+│       ├── lib/                         # 브리지(bridge.ts), 전역 상태, 공통 컴포넌트
+│       └── pages/                       # 미페(face/), 크레스트, 감독, 이력(history/), 설정
 └── src/
+    ├── app/
+    │   ├── api.py                       # 화면에서 호출하는 파이썬 API (pywebview js_api)
+    │   └── server.py                    # 화면·게임 이미지를 제공하는 로컬 HTTP 서버
     ├── api/
-    │   └── nexon_api.py                 # Nexon/CDN API 클라이언트
-    ├── core/
-    │   ├── config.py                    # 설정 관리
-    │   ├── face_changer.py              # 미페 교체 핵심 로직
-    │   ├── crest_changer.py             # 크레스트 교체 핵심 로직
-    │   ├── manager_changer.py           # 감독 얼굴 교체 핵심 로직
-    │   ├── manager_db.py                # 감독 DB 빌드/로드/검색
-    │   ├── db_init.py                   # 시작 시 DB 파일 존재 여부 확인 및 생성
-    │   ├── history.py                   # 변경 이력 관리 (미페/크레스트/감독)
-    │   └── updater.py                   # GitHub 자동 업데이트
-    └── ui/
-        ├── app.py                       # 메인 앱 윈도우 (탭 구조 + DB 초기화 오버레이)
-        ├── main_frame.py                # 미페 변경 메인 화면
-        ├── crest_frame.py               # 크레스트 변경 화면
-        ├── manager_frame.py             # 감독 얼굴 변경 화면
-        ├── settings_frame.py            # 설정 화면
-        ├── history_frame.py             # 변경 이력 화면 (미페/크레스트/감독)
-        └── components/
-            ├── image_preview.py         # 이미지 미리보기 위젯
-            ├── player_list.py           # 선수 검색 + 결과 목록
-            └── filter_panel.py          # 드롭다운 필터 팝업
+    │   ├── nexon_api.py                 # 메타데이터 프록시 / CDN 클라이언트
+    │   └── datacenter.py                # 카드별 실제 미페 경로 (데이터센터 선수검색)
+    └── core/
+        ├── config.py                    # 설정 관리
+        ├── fileops.py                   # 읽기전용 속성, 이미지 정규화 등 공통 파일 처리
+        ├── face_changer.py              # 미페 교체 핵심 로직
+        ├── face_catalog.py              # 선수 한 명의 미페 후보 전체 (바둑판 모드)
+        ├── crest_changer.py             # 크레스트 교체 핵심 로직
+        ├── manager_changer.py           # 감독 얼굴 교체 핵심 로직
+        ├── manager_db.py                # 감독 DB 빌드/로드
+        ├── db_init.py                   # 시작 시 DB 파일 존재 여부 확인 및 생성
+        ├── history.py                   # 변경 이력 관리 (미페/크레스트/감독)
+        └── updater.py                   # GitHub 자동 업데이트
 ```
 
 ---
@@ -55,11 +55,11 @@ MFChanger/
 | 항목 | 내용 |
 |------|------|
 | 언어 | Python 3.10.11 |
-| GUI | CustomTkinter 5.2.2 |
+| 창 | pywebview 6.2 (Windows WebView2) |
+| 화면 | Svelte 5 + Vite 8 + TypeScript, Pretendard, Lucide 아이콘 |
 | HTTP | requests 2.33.1 |
 | 이미지 | Pillow 12.2.0 |
 | 버전 비교 | packaging 26.0 |
-| 이미지 유사도 | opencv-python (ORB feature matching) |
 | HTML 파싱 | beautifulsoup4 (데이터센터 크롤링) |
 
 ---
@@ -354,7 +354,7 @@ def _cv2_read(path, flags=cv2.IMREAD_UNCHANGED):
 시즌 뱃지: 142개 전체 캐시 (소용량이라 상한 없음).
 
 ### 6.3 UI 비동기 처리
-API/파일 IO는 전부 `threading.Thread(daemon=True)`로 분리. UI 업데이트는 반드시 `self.after(0, callback)` 로 메인 스레드에서 실행.
+pywebview는 화면의 API 호출을 호출마다 별도 스레드에서 실행하므로 네트워크·파일 작업을 그대로 수행한다. 화면은 Promise로 결과를 받고, 진행률(DB 생성·업데이트 다운로드)은 파이썬이 `window.state.progress`를 갱신해 전달한다.
 
 ### 6.4 API 키 관리 현황
 현재 `api_key.txt`에 저장, 개인이 직접 발급. 타인에게 배포 시 사용성 문제 있음. 추후 `spid.json`을 GitHub 릴리즈에 번들로 포함하는 방식으로 전환 고려 중.
@@ -369,13 +369,27 @@ API/파일 IO는 전부 `threading.Thread(daemon=True)`로 분리. UI 업데이�
 
 ---
 
+### 6.6 미페 교체 대상: 데이터센터 경로 (v0.4.1)
+
+카드마다 게임이 기본으로 쓰는 미페 파일은 넥슨 서버가 정한다. CDN에 `playersAction/p{spid}.png`가 있어도 게임은 `players/p{pid}.png`(대갈)나 `playersAction/p{pid}_25.png`(공통)를 쓰는 경우가 많다. 파일 존재 여부로는 판별할 수 없어, 데이터센터 선수검색 결과의 이미지 경로를 정답으로 쓴다(인게임 테스트로 검증). `playersActionHigh`/`playersHigh`는 확인한 화면에서 쓰이지 않아 교체하지 않는다.
+
+여러 카드가 같은 파일을 쓰면 카드별로 따로 바꿀 수 없으므로 교체 전에 함께 바뀌는 카드를 알린다.
+
+### 6.7 전체 미페(바둑판) 모드 (v0.5.0)
+
+인게임에서 카드별로 미페를 직접 고를 수 있어 기본 경로만으로는 사용자가 보는 파일을 알 수 없다. 선수 한 명의 후보(대갈 / 공통 연도별 / 카드 전용)를 게임 캐시·데이터센터·CDN 확인으로 모아 보여주고 사용자가 고르게 한다.
+
+### 6.8 화면 구조: pywebview + Svelte (v0.5.0)
+
+CustomTkinter를 걷어내고 웹 기술로 화면을 다시 만들었다. 핵심 로직(`src/core`, `src/api`)은 그대로 두고 `src/app/api.py`가 화면용 API를, `src/app/server.py`가 빌드된 화면과 게임 이미지를 제공한다. 8만 명이 넘는 선수 목록은 브리지 직렬화 부담을 피해 HTTP로 받는다. 게임 파일 이미지 주소에는 수정 시각을 붙여 교체 직후에도 웹뷰 캐시 대신 새 이미지를 받는다.
+
+---
+
 ## 7. 미구현 / 추후 과제
 
 | 항목 | 상태 | 비고 |
 |------|------|------|
 | 팀별 필터 | 미구현 | API에 팀 정보 없음. 데이터센터 스크래핑 필요 - 복잡도 대비 효용 낮아 보류 |
 | spid.json GitHub 번들 배포 | 미구현 | API 키 없이도 동작 가능하게 - 추후 배포 전 결정 필요 |
-| 드래그앤드롭 이미지 입력 | 미구현 | `tkinterdnd2` 라이브러리 필요, 현재 Ctrl+V로 대체 |
-| PyInstaller 패키징 | 미구현 | 기능 완성 후 진행 |
 | GitHub Actions 자동 빌드/배포 | 미구현 | 릴리즈 파이프라인 구성 필요 |
 | 설정 화면 API 키 입력란 | 미구현 | 현재 파일로만 관리 |
