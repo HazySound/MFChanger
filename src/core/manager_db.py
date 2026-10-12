@@ -1,12 +1,7 @@
-"""
-감독 DB 모듈
-- managers_db.json 없으면 자동 크롤링해서 생성
-- 이름/팀 검색 제공
-"""
+"""감독 DB — managers_db.json (없으면 데이터센터 감독 페이지를 크롤링해 생성)"""
 
 import json
 import re
-from pathlib import Path
 
 import requests
 from bs4 import BeautifulSoup
@@ -61,7 +56,7 @@ def build_db(timeout: int = 15) -> dict[str, dict]:
 
 
 def load_db() -> dict[str, dict]:
-    """DB 파일을 읽어 반환. 없으면 None 반환 (자동 빌드는 ensure_db 사용)."""
+    """DB 파일을 읽어 반환. 없거나 읽을 수 없으면 빈 dict (자동 생성은 ensure_db)."""
     if not DB_PATH.exists():
         return {}
     try:
@@ -83,21 +78,3 @@ def ensure_db(force_rebuild: bool = False) -> dict[str, dict]:
         return _cache
     _cache = build_db()
     return _cache
-
-
-def search(query: str, db: dict[str, dict] | None = None) -> list[tuple[str, str, str]]:
-    """
-    이름 또는 팀명으로 검색.
-    반환: [(manager_id, name, team), ...] 이름 오름차순
-    """
-    if db is None:
-        db = ensure_db()
-    q = query.strip().lower()
-    if not q:
-        return [(mid, v["name"], v["team"]) for mid, v in db.items()]
-    results = [
-        (mid, v["name"], v["team"])
-        for mid, v in db.items()
-        if q in v["name"].lower() or q in v["team"].lower()
-    ]
-    return sorted(results, key=lambda x: x[1])

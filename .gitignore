@@ -11,3 +11,6 @@ error.txt
 error.txt
 error.txt
 .cache/face_paths.json
+.cache/uploads/
+frontend/node_modules/
+frontend/dist/

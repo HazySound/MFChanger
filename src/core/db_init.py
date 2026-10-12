@@ -1,53 +1,28 @@
-"""
-시작 시 DB 파일 존재 여부 확인 및 자동 생성 모듈
-대상: spid.json / seasonid.json / managers_db.json
-"""
+"""시작 시 필요한 DB 파일(spid.json / seasonid.json / managers_db.json) 확인 및 생성"""
 
-from pathlib import Path
 from typing import Callable
 
-from src.api.nexon_api import (
-    META_CACHE_PATH,
-    SPID_CACHE_FILE,
-    fetch_spid_meta,
-    fetch_season_meta,
-)
+from src.api.nexon_api import SEASON_CACHE_FILE, SPID_CACHE_FILE, fetch_season_meta, fetch_spid_meta
 from src.core.manager_db import DB_PATH, build_db
 
-# (key, 표시 레이블, 파일 경로) 순서 고정
+# (key, 표시 이름, 파일 경로, 생성 함수) — 순서대로 생성
 STEPS = [
-    ("spid",    "선수 DB (spid.json)",       SPID_CACHE_FILE),
-    ("season",  "시즌 DB (seasonid.json)",    META_CACHE_PATH / "seasonid.json"),
-    ("manager", "감독 DB (managers_db.json)", DB_PATH),
+    ("spid",    "선수 DB",  SPID_CACHE_FILE,   lambda: fetch_spid_meta(force=True)),
+    ("season",  "시즌 DB",  SEASON_CACHE_FILE, lambda: fetch_season_meta(force=True)),
+    ("manager", "감독 DB",  DB_PATH,           build_db),
 ]
 
 
 def check_missing() -> list[str]:
-    """없는 DB 파일의 key 목록 반환."""
-    return [key for key, _, path in STEPS if not path.exists()]
+    """없는 DB 파일의 key 목록."""
+    return [key for key, _, path, _ in STEPS if not path.exists()]
 
 
-def build_missing(
-    missing: list[str],
-    step_cb: Callable[[str, str, float], None] | None = None,
-) -> None:
-    """
-    missing에 있는 DB 파일만 순서대로 생성.
-    step_cb(key, label, fraction) — 각 단계 시작 전 호출 (fraction: 0.0~1.0)
-    완료 후 step_cb("done", "완료", 1.0) 호출.
-    """
-    total = len(missing)
-    for i, key in enumerate(missing):
-        _, label, _ = next(s for s in STEPS if s[0] == key)
-        if step_cb:
-            step_cb(key, label, i / total)
-
-        if key == "spid":
-            fetch_spid_meta(force=True)
-        elif key == "season":
-            fetch_season_meta(force=True)
-        elif key == "manager":
-            build_db()
-
-    if step_cb:
-        step_cb("done", "완료", 1.0)
+def build_missing(missing: list[str], on_step: Callable[[str, float], None]) -> None:
+    """missing에 있는 DB만 순서대로 생성. 각 단계 시작 전 on_step(표시 이름, 진행률).
+    실패하면 예외를 그대로 올린다 — 호출부가 사용자에게 알리고 진행 화면을 닫아야 한다."""
+    targets = [step for step in STEPS if step[0] in missing]
+    for i, (_, label, _, build) in enumerate(targets):
+        on_step(label, i / len(targets))
+        build()
+    on_step("완료", 1.0)

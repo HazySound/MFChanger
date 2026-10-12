@@ -6,7 +6,6 @@ import subprocess
 import sys
 import threading
 import time
-import webbrowser
 from pathlib import Path
 from typing import Callable, Optional
 from urllib.parse import urlparse
@@ -148,7 +147,8 @@ def _old_exe_path(current_exe: Path) -> Path:
 
 def apply_update(new_exe_path: Path):
     """
-    실행 중인 exe를 새 exe로 교체 후 재실행. 반환하지 않음 (sys.exit).
+    실행 중인 exe를 새 exe로 교체하고 새 버전을 실행한다.
+    호출부는 반환 직후 앱을 종료해야 한다 (창을 닫아 메인 루프를 끝낼 것).
 
     Windows는 실행 중인 exe의 삭제는 막지만 이름 변경은 허용하므로
     현재 exe → *.old.exe 로 비켜두고 그 자리에 새 exe를 넣는다.
@@ -181,7 +181,6 @@ def apply_update(new_exe_path: Path):
         close_fds=True,
         creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
     )
-    sys.exit(0)
 
 
 def cleanup_after_update():
@@ -217,7 +216,3 @@ def cleanup_after_update():
             time.sleep(1)
 
     threading.Thread(target=_worker, daemon=True).start()
-
-
-def open_release_page(url: str):
-    webbrowser.open(url)

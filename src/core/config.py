@@ -1,7 +1,6 @@
 """설정 관리 모듈 - JSON 파일로 영구 저장"""
 
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -21,22 +20,20 @@ def _app_dir() -> Path:
 
 APP_DIR = _app_dir()
 CACHE_DIR = APP_DIR / ".cache"
-
 CONFIG_PATH = APP_DIR / "config.json"
-API_KEY_PATH = APP_DIR / "api_key.txt"
 
-DEFAULT_FC_PATH = r"C:\Nexon\EA SPORTS(TM) FC ONLINE"
-FACE_SUBPATH = r"_cache\live\externalAssets\common\playersAction"
-CREST_SUBPATH = r"_cache\live\externalAssets\common\crests"
+ASSETS_SUBPATH = Path("_cache/live/externalAssets/common")
 
 DEFAULTS = {
-    "fc_online_path": DEFAULT_FC_PATH,
+    "fc_online_path": r"C:\Nexon\EA SPORTS(TM) FC ONLINE",
     "backup_enabled": True,
     "backup_path": str(Path.home() / "MFChanger_backup"),
     "check_update_on_start": True,
-    "theme": "dark",
-    "ui_scale": 1.5,
+    "zoom": 1.0,
 }
+
+# 이전 버전(tkinter UI)에서만 쓰던 키 — 불러올 때 정리
+_OBSOLETE_KEYS = ("theme", "ui_scale")
 
 
 class Config:
@@ -45,91 +42,59 @@ class Config:
         self.load()
 
     def load(self):
-        if CONFIG_PATH.exists():
-            try:
-                with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-                    self._data = json.load(f)
-            except (json.JSONDecodeError, OSError):
-                self._data = {}
-        # 누락된 기본값 채우기
+        try:
+            self._data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            self._data = {}
+        for key in _OBSOLETE_KEYS:
+            self._data.pop(key, None)
         for key, val in DEFAULTS.items():
             self._data.setdefault(key, val)
 
     def save(self):
-        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-            json.dump(self._data, f, ensure_ascii=False, indent=2)
+        CONFIG_PATH.write_text(
+            json.dumps(self._data, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
 
-    def get(self, key: str, default=None):
-        return self._data.get(key, default)
-
-    def set(self, key: str, value):
-        self._data[key] = value
+    def update(self, **values):
+        """알려진 설정 키만 반영하고 저장."""
+        unknown = set(values) - set(DEFAULTS)
+        if unknown:
+            raise KeyError(f"알 수 없는 설정: {', '.join(sorted(unknown))}")
+        self._data.update(values)
         self.save()
+
+    def as_dict(self) -> dict:
+        return {key: self._data[key] for key in DEFAULTS}
 
     @property
     def fc_online_path(self) -> str:
         return self._data["fc_online_path"]
 
-    @fc_online_path.setter
-    def fc_online_path(self, value: str):
-        self.set("fc_online_path", value)
-
     @property
     def assets_dir(self) -> Path:
         """CDN 캐시 루트 (_cache/live/externalAssets/common)."""
-        return Path(self.fc_online_path) / r"_cache\live\externalAssets\common"
-
-    @property
-    def face_dir(self) -> Path:
-        return Path(self.fc_online_path) / FACE_SUBPATH
+        return Path(self.fc_online_path) / ASSETS_SUBPATH
 
     @property
     def crest_dir(self) -> Path:
-        return Path(self.fc_online_path) / CREST_SUBPATH
+        return self.assets_dir / "crests"
 
     @property
     def manager_dir(self) -> Path:
-        return Path(self.fc_online_path) / r"_cache\live\externalAssets\common\managers"
+        return self.assets_dir / "managers"
 
     @property
     def backup_enabled(self) -> bool:
         return self._data["backup_enabled"]
 
-    @backup_enabled.setter
-    def backup_enabled(self, value: bool):
-        self.set("backup_enabled", value)
-
     @property
     def backup_path(self) -> Path:
         return Path(self._data["backup_path"])
-
-    @backup_path.setter
-    def backup_path(self, value: str):
-        self.set("backup_path", value)
 
     @property
     def check_update_on_start(self) -> bool:
         return self._data["check_update_on_start"]
 
-    @check_update_on_start.setter
-    def check_update_on_start(self, value: bool):
-        self.set("check_update_on_start", value)
-
-    @property
-    def ui_scale(self) -> float:
-        return float(self._data.get("ui_scale", 1.5))
-
-    @ui_scale.setter
-    def ui_scale(self, value: float):
-        self.set("ui_scale", value)
-
-    def get_api_key(self) -> str:
-        if API_KEY_PATH.exists():
-            return API_KEY_PATH.read_text(encoding="utf-8").strip()
-        return ""
-
     def is_fc_path_valid(self) -> bool:
-        return self.face_dir.exists()
-
-    def is_crest_path_valid(self) -> bool:
-        return self.crest_dir.exists()
+        return self.assets_dir.exists()

@@ -1,6 +1,8 @@
 """변경 이력 관리 (JSON 저장)"""
 
+import functools
 import json
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -13,6 +15,17 @@ from .config import APP_DIR
 HISTORY_PATH = APP_DIR / "history.json"
 CREST_HISTORY_PATH = APP_DIR / "crest_history.json"
 MANAGER_HISTORY_PATH = APP_DIR / "manager_history.json"
+
+# 화면 API는 호출마다 별도 스레드 — 읽고-고치고-쓰는 동작이 겹치지 않게
+_lock = threading.RLock()
+
+
+def _locked(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        with _lock:
+            return func(*args, **kwargs)
+    return wrapper
 
 
 def _read_json(path: Path) -> list:
@@ -66,6 +79,7 @@ def save_history(records: list[ChangeRecord]):
     _write_json(HISTORY_PATH, data)
 
 
+@_locked
 def add_record(record: ChangeRecord):
     """기록 추가 — 같은 SPID라도 교체하지 않고 스택에 쌓음."""
     records = load_history()
@@ -73,6 +87,7 @@ def add_record(record: ChangeRecord):
     save_history(records)
 
 
+@_locked
 def remove_record(spid: int):
     """가장 최근 기록 하나만 제거 (undo 1단계)."""
     records = load_history()
@@ -84,11 +99,19 @@ def remove_record(spid: int):
     save_history(records)
 
 
-def remove_all_face_records(spid: int):
-    """특정 SPID 기록 전체 제거."""
-    records = load_history()
-    records = [r for r in records if r.spid != spid]
-    save_history(records)
+@_locked
+def remove_records(spid: int, positions: Optional[set[int]] = None):
+    """해당 SPID 기록 중 positions(오래된 순 인덱스)에 해당하는 것을 제거.
+    positions가 None이면 전체. 다른 선수 기록의 순서는 그대로 유지한다."""
+    kept, pos = [], 0
+    for record in load_history():
+        if record.spid == spid:
+            drop = positions is None or pos in positions
+            pos += 1
+            if drop:
+                continue
+        kept.append(record)
+    save_history(kept)
 
 
 def find_record(spid: int) -> Optional[ChangeRecord]:
@@ -101,10 +124,10 @@ def find_record(spid: int) -> Optional[ChangeRecord]:
 
 
 def find_record_by_target(target_path: str) -> Optional[ChangeRecord]:
-    """같은 게임 파일을 덮어쓴 가장 최근 기록 (공유 미페 파일용)."""
+    """그 게임 파일을 덮어쓴 가장 최근 기록. 경로가 없는 구버전 기록은 playersAction/p{spid}.png."""
     result = None
     for r in load_history():
-        if r.target_path == target_path:
+        if (r.target_path or f"playersAction/p{r.spid}.png") == target_path:
             result = r
     return result
 
@@ -135,6 +158,7 @@ def save_crest_history(records: list[CrestChangeRecord]):
     _write_json(CREST_HISTORY_PATH, data)
 
 
+@_locked
 def add_crest_record(record: CrestChangeRecord):
     records = load_crest_history()
     records = [r for r in records if r.crest_id != record.crest_id]
@@ -142,6 +166,7 @@ def add_crest_record(record: CrestChangeRecord):
     save_crest_history(records)
 
 
+@_locked
 def remove_crest_record(crest_id: int):
     records = load_crest_history()
     records = [r for r in records if r.crest_id != crest_id]
@@ -177,6 +202,7 @@ def save_manager_history(records: list[ManagerChangeRecord]):
     _write_json(MANAGER_HISTORY_PATH, data)
 
 
+@_locked
 def add_manager_record(record: ManagerChangeRecord):
     records = load_manager_history()
     records = [r for r in records if r.manager_id != record.manager_id]
@@ -191,7 +217,15 @@ def find_manager_record(manager_id: str) -> Optional[ManagerChangeRecord]:
     return None
 
 
+@_locked
 def remove_manager_record(manager_id: str):
     records = load_manager_history()
     records = [r for r in records if r.manager_id != manager_id]
     save_manager_history(records)
+
+
+def referenced_files() -> set[Path]:
+    """이력이 가리키는 백업·결과 파일 — 백업 폴더를 옮겨도 예전 이력 썸네일을 보여주기 위함."""
+    paths = {p for r in load_history() for p in (r.backup_path, r.result_path) if p}
+    paths |= {p for r in load_crest_history() for p in r.backup_paths}
+    return {Path(p).resolve() for p in paths}
